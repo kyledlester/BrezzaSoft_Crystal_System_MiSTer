@@ -17,3 +17,6 @@ Category: A blocks BIOS, B blocks game, C blocks graphics/playability, D accurac
 | K11 | D | Renderer paths unused by crysking (4/16 bpp, rotation, clamp, all blend selections) covered by scripts/sim/render_random.sh: 25,000 random packets / 12.1M pixels identical | closed |
 | K12 | D | Odd PC fetches ignore bit 0 (MAME's unaligned word fetch behaviour depends on its memory system) | by design |
 | K13 | D | Sound EnvVol kept as the 24-bit register image between samples (MAME keeps an s32) | open |
+| K14 | D | Timer auto-reload uses the period registered one clock earlier: a TimerControl/TimerCount write in the single clock before an expiry is applied one period late (timing closure; starts are exact) | by design |
+| K15 | D | Texture-RAM write snoop reaches the renderer's texture caches one clock after the CPU write is issued (the write itself reaches SDRAM later; fills starting in that clock are marked dirty) | by design |
+| K16 | U | Not yet run on hardware: SDRAM board timing, DDR3 latency, HDMI/analog output, audio level and input mapping are simulation-only so far | HARDWARE_TEST_1 |

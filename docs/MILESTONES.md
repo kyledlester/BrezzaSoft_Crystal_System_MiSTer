@@ -77,4 +77,13 @@ Status register identical. Envelope/loop/16-bit/8-bit implemented per MAME, not 
 Every CPU read of the sound registers is compared too. Full core: `tb_core --wav` captures audio_l/audio_r at the
 44.19 kHz output rate; silent during attract, non-zero from the coin onwards (peak 10,775) in the gameplay run.
 
-## M22–M28 — IN PROGRESS (timing closure for the first hardware build)
+## M22 — Complete core, first hardware build — READY FOR HARDWARE TEST
+
+Quartus 17.0 Lite: fit successful, 16,828 / 41,910 ALMs (40 %), 24,407 registers, 173 / 553 M10K (31 %),
+57 / 112 DSP. Timing met at every clock: clk_sys (85.909 MHz) setup +0.241 ns / hold +0.254 ns, HDMI +0.361 ns,
+SDRAM_CLK +2.619 ns, TNS 0. Closure came from register/pipeline changes only (renderer P2W/P6/P7 stages, registered
+tag lookups, per-client SDRAM timing flags, single-adder ALU, two-clock shifts, registered fetch translation,
+pipelined timer start, two-clock envelope/mix) -- all benches re-run identical after each change.
+RBF: `Releases/Crystal_YYYYMMDD.rbf`; MRA: `mra/The Crystal of Kings.mra`. Procedure: docs/HARDWARE_TEST_1.md.
+
+## M23–M28 — TODO (after hardware feedback)
