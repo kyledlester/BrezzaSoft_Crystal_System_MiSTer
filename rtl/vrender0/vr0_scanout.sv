@@ -5,6 +5,9 @@
 // RGB565 expanded with MAME's pal5bit/pal6bit (bit replication). Each visible line is fetched into one half of
 // a 2 x 1024 line buffer during the previous line (bursts of 32 words from SDRAM bank 2, highest client
 // priority), so the display never waits on memory. CRTMOD b9 (blank) outputs black.
+// flip (OSD Orientation "Flipped"): the picture turned 180 degrees on the native raster -- display line y is
+// fetched from line vdisp-1-y and each line is read out right to left. It reaches the 15-kHz output and HDMI
+// alike, with no added latency; a change takes effect at the next frame.
 module vr0_scanout (
     input  wire        clk,
     input  wire        rst_n,
@@ -19,6 +22,7 @@ module vr0_scanout (
     input  wire  [9:0] vtotal,
     input  wire [22:0] display_dest,  // frame RAM byte address
     input  wire        blank,
+    input  wire        flip,
 
     output reg   [7:0] r,
     output reg   [7:0] g,
@@ -44,6 +48,7 @@ module vr0_scanout (
     reg        line_done_v;
     reg  [9:0] vcnt_q;
     reg [15:0] px;
+    reg        f_flip, d_flip;   // latched for the fetch of a frame's first line / for its display
 
     // which line to fetch: the next visible line (vcnt + 1, wrapping to 0 at the end of the frame)
     wire [9:0] next_y = (vcnt + 10'd1 >= vtotal) ? 10'd0 : vcnt + 10'd1;
@@ -57,7 +62,8 @@ module vr0_scanout (
             if (vcnt != vcnt_q && next_y < vdisp) begin
                 if (fetching) underflows <= underflows + 16'd1;
                 fetching  <= 1'b1;
-                fetch_y   <= next_y;
+                if (next_y == 10'd0) f_flip <= flip;
+                fetch_y   <= ((next_y == 10'd0) ? flip : f_flip) ? vdisp - 10'd1 - next_y : next_y;
                 fetch_buf <= next_y[0];
                 fetch_x   <= 10'd0;
                 wr_x      <= 10'd0;
@@ -85,7 +91,8 @@ module vr0_scanout (
 
     // pixel output (one clock of read latency; hcnt is stable for a whole pixel)
     always @(posedge clk) begin
-        px <= lb[{vcnt[0], hcnt}];
+        if (vcnt == 10'd0 && vcnt_q != 10'd0) d_flip <= f_flip;
+        px <= lb[{vcnt[0], d_flip ? hdisp - 10'd1 - hcnt : hcnt}];
         if (ce_pix) begin
             if (hblank || vblank || blank) begin
                 r <= 8'd0; g <= 8'd0; b <= 8'd0;

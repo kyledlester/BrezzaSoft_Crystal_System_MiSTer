@@ -46,6 +46,10 @@ Pause, Free Play, DSW 3-7 (unknown, as MAME), Test. Defaults: all Off.
 ## OSD
 
 * **Aspect ratio**, **Scandoubler Fx**: as other MiSTer arcade cores.
+* **Orientation**: *Original* (default); *Flipped* turns the picture 180 degrees in the core (15-kHz/analog
+  output and HDMI alike, no added latency); *Rotate CW* / *Rotate CCW* turn the HDMI picture 90 degrees through
+  the MiSTer scaler for a vertical monitor (the analog output keeps the original picture; Direct Video is not
+  rotated). Aspect ratio follows (3:4 when rotated).
 * **DIP Switches**: the board's DSW (from the MRA): Pause, Free Play, DSW 3-7, Test (DSW:8). All Off by default; *Test* On boots into the BIOS set-up menu ("PLEASE DIP 8 OFF" when leaving it).
 * **CRT Adjust** submenu (native 15-kHz output, Scandoubler Fx None): *CRT Adjust* Off/On, *CRT H-Size* -12..+10 %,
   *CRT H-Position* -48..+42 pixels, *CRT V-Shift* -8..+7 lines (negative values stop at -3 so VSync never lands

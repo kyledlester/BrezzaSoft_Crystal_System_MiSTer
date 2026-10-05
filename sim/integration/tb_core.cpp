@@ -79,7 +79,7 @@ int main(int argc, char **argv)
     int frames = 120, snap_every = 0;
     std::set<int> snap_at;
     std::multimap<int, std::string> inputs;
-    bool turbo = false;
+    bool turbo = false, flip = false;
     int dsw = -1;                         // >= 0: send the DIP switches on index 254 after the ROM download (as MiSTer)
     std::string wav;
     for (int i = 1; i < argc; i++) {
@@ -92,6 +92,7 @@ int main(int argc, char **argv)
         else if (a == "--out") out = nx();
         else if (a == "--input") { std::string v = nx(); inputs.emplace(atoi(v.c_str()), v.substr(v.find(':') + 1)); }
         else if (a == "--turbo") turbo = true;
+        else if (a == "--flip") flip = true;
         else if (a == "--dsw") dsw = (int)strtol(nx().c_str(), nullptr, 16);
         else if (a == "--wav") wav = nx();
     }
@@ -112,6 +113,7 @@ int main(int argc, char **argv)
     t->joy0 = t->joy1 = t->joy2 = t->joy3 = 0;
     t->sw_test = 0;
     t->cpu_turbo = turbo;
+    t->osd_flip = flip;
     t->DDRAM_BUSY = 0;
     t->DDRAM_DOUT_READY = 0;
     uint64_t cyc = 0;

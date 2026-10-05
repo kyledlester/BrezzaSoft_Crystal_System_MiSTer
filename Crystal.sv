@@ -43,17 +43,28 @@ assign AUDIO_S = 1;
 assign LED_POWER = 0;
 assign BUTTONS = 0;
 
-assign FB_EN = 0;
-assign FB_FORMAT = 0;
-assign FB_WIDTH = 0;
-assign FB_HEIGHT = 0;
-assign FB_BASE = 0;
-assign FB_STRIDE = 0;
 assign FB_FORCE_BLANK = 0;
 
+// Orientation (one selector, as in the owner's other cores):
+//   orient  OSD label    native 15 kHz / Direct Video   HDMI (scaler)            no_rotate  rotate_ccw  osd_flip
+//   0       Original     as the board                   as the board             1          x           0
+//   1       Flipped      turned 180 (scanout)           turned 180 (scanout)     1          x           1
+//   2       Rotate CW    as the board                   turned 90 clockwise      0          0           0
+//   3       Rotate CCW   as the board                   turned 90 counter-cw     0          1           0
+// Flipped is native (vr0_scanout reads the frame buffer bottom-up, right to left): no latency, every output.
+// Rotate CW / CCW use the framework's screen_rotate (DDR3 framebuffer -> HDMI scaler only), for a vertical
+// monitor; the analog output keeps the board's picture. Direct Video bypasses the rotation.
+wire [1:0] orient     = status[14:13];
+wire       osd_flip   = (orient == 2'd1);
+wire       no_rotate  = !orient[1] | direct_video;
+wire       rotate_ccw = (orient == 2'd3);
+wire       flip       = 1'b0;            // the 180-degree turn is native (osd_flip)
+wire       video_rotated;
+
+// 320x240 on a 4:3 screen; turned 90 degrees it is 3:4
 wire [1:0] ar = status[122:121];
-assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
-assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
+assign VIDEO_ARX = (!ar) ? (no_rotate ? 12'd4 : 12'd3) : (ar - 1'd1);
+assign VIDEO_ARY = (!ar) ? (no_rotate ? 12'd3 : 12'd4) : 12'd0;
 
 `include "build_id.v"
 // Status bits: 0 Reset, 5 Service (test) switch, 6 CPU pacing off, 10:9 Stereo mix, 12:11 Scandoubler Fx, 122:121 Aspect ratio;
@@ -64,6 +75,7 @@ localparam CONF_STR = {
 	"-;",
 	"O[122:121],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
 	"O[12:11],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%;",
+	"O[14:13],Orientation,Original,Flipped,Rotate CW,Rotate CCW;",
 	"-;",
 	"DIP;",
 	"P1,CRT Adjust;",
@@ -136,6 +148,11 @@ crystal_pll pll (.refclk(CLK_50M), .rst(1'b0), .clk_sys(clk_sys), .locked(pll_lo
 ///////////////////////   CRYSTAL SYSTEM BOARD   ///////////////////////////
 
 wire        ce_pix, hblank, vblank, hsync, vsync, vb_next;
+// DDR3: flash store (core) and screen_rotate share the port (crystal_ddr_mux)
+wire        fl_busy, fl_rd, fl_we;
+wire  [7:0] fl_burstcnt, fl_be;
+wire [28:0] fl_addr;
+wire [63:0] fl_din;
 wire [7:0]  core_r, core_g, core_b;
 wire signed [15:0] snd_l, snd_r;
 wire        rom_loading, cpu_running;
@@ -162,9 +179,9 @@ crystal_core core
 	.SDRAM_DQ_I(SDRAM_DQ), .SDRAM_DQ_O(sdram_dq_o), .SDRAM_DQ_OE(sdram_dq_oe), .SDRAM_A(SDRAM_A), .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH), .SDRAM_BA(SDRAM_BA),
 	.SDRAM_nCS(SDRAM_nCS), .SDRAM_nWE(SDRAM_nWE), .SDRAM_nRAS(SDRAM_nRAS), .SDRAM_nCAS(SDRAM_nCAS),
 	.SDRAM_CKE(SDRAM_CKE), .SDRAM_CLK(SDRAM_CLK),
-	.DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT), .DDRAM_ADDR(DDRAM_ADDR), .DDRAM_DOUT(DDRAM_DOUT),
-	.DDRAM_DOUT_READY(DDRAM_DOUT_READY), .DDRAM_RD(DDRAM_RD), .DDRAM_DIN(DDRAM_DIN), .DDRAM_BE(DDRAM_BE),
-	.DDRAM_WE(DDRAM_WE),
+	.DDRAM_BUSY(fl_busy), .DDRAM_BURSTCNT(fl_burstcnt), .DDRAM_ADDR(fl_addr), .DDRAM_DOUT(DDRAM_DOUT),
+	.DDRAM_DOUT_READY(DDRAM_DOUT_READY), .DDRAM_RD(fl_rd), .DDRAM_DIN(fl_din), .DDRAM_BE(fl_be),
+	.DDRAM_WE(fl_we), .osd_flip(osd_flip),
 	.ce_pix(ce_pix), .r(core_r), .g(core_g), .b(core_b), .hblank(hblank), .vblank(vblank), .hsync(hsync),
 	.vsync(vsync), .vb_next(vb_next),
 	.audio_l(snd_l), .audio_r(snd_r),
@@ -236,6 +253,52 @@ arcade_video #(.WIDTH(320), .DW(24), .GAMMA(1)) arcade_video
 	.fx({1'b0, status[12:11]}),
 	.forced_scandoubler(forced_scandoubler),
 	.gamma_bus(gamma_bus)
+);
+
+wire        sr_clk, sr_we, sr_rd;
+wire  [7:0] sr_burstcnt, sr_be;
+wire [28:0] sr_addr;
+wire [63:0] sr_din;
+screen_rotate screen_rotate
+(
+	.CLK_VIDEO(CLK_VIDEO),
+	.CE_PIXEL(CE_PIXEL),
+	.VGA_R(VGA_R),
+	.VGA_G(VGA_G),
+	.VGA_B(VGA_B),
+	.VGA_HS(VGA_HS),
+	.VGA_VS(VGA_VS),
+	.VGA_DE(VGA_DE),
+	.rotate_ccw(rotate_ccw),
+	.no_rotate(no_rotate),
+	.flip(flip),
+	.video_rotated(video_rotated),
+	.FB_EN(FB_EN),
+	.FB_FORMAT(FB_FORMAT),
+	.FB_WIDTH(FB_WIDTH),
+	.FB_HEIGHT(FB_HEIGHT),
+	.FB_BASE(FB_BASE),
+	.FB_STRIDE(FB_STRIDE),
+	.FB_VBL(FB_VBL),
+	.FB_LL(FB_LL),
+	.DDRAM_CLK(sr_clk),
+	.DDRAM_BUSY(1'b0),
+	.DDRAM_BURSTCNT(sr_burstcnt),
+	.DDRAM_ADDR(sr_addr),
+	.DDRAM_DIN(sr_din),
+	.DDRAM_BE(sr_be),
+	.DDRAM_WE(sr_we),
+	.DDRAM_RD(sr_rd)
+);
+
+crystal_ddr_mux ddr_mux
+(
+	.clk(clk_sys),
+	.f_burstcnt(fl_burstcnt), .f_addr(fl_addr), .f_din(fl_din), .f_be(fl_be), .f_we(fl_we), .f_rd(fl_rd), .f_busy(fl_busy),
+	.r_addr(sr_addr), .r_din(sr_din), .r_be(sr_be), .r_we(sr_we),
+	.DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT), .DDRAM_ADDR(DDRAM_ADDR), .DDRAM_DIN(DDRAM_DIN),
+	.DDRAM_BE(DDRAM_BE), .DDRAM_WE(DDRAM_WE), .DDRAM_RD(DDRAM_RD),
+	.drops()
 );
 
 assign LED_DISK = {1'b0, rom_loading};

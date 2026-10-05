@@ -69,6 +69,7 @@ module crystal_core (
     output wire [31:0] dbg_defer_state,
     output wire [15:0] dbg_texq_max,
     output wire        vb_next,          // vertical blank of the next raster line (CRT Adjust)
+    input  wire        osd_flip,         // OSD Orientation "Flipped": 180-degree turn in the scanout
     output wire        dbg_d_ack,
     output wire        dbg_d_we,
     output wire [31:0] dbg_d_addr,
@@ -334,7 +335,7 @@ module crystal_core (
         .clk(clk_sys), .rst_n(board_rst_n),
         .ce_pix(ce_pix), .hcnt(hcnt), .vcnt(vcnt), .hblank(hb0), .vblank(vb0),
         .hdisp(g_hdisp), .vdisp(g_vdisp), .vtotal(g_vtot),
-        .display_dest(display_dest), .blank(crt_blank || !board_rst_n),
+        .display_dest(display_dest), .blank(crt_blank || !board_rst_n), .flip(osd_flip),
         .r(r), .g(g), .b(b),
         .m_req(sc_req), .m_addr(sc_addr), .m_len(sc_len), .m_rvalid(c_rvalid[0]), .m_rdata(sd_rdata), .m_done(c_done[0]),
         .underflows(dbg_underflows)
