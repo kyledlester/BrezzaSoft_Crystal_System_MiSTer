@@ -1,0 +1,54 @@
+# Local inputs and authentication material
+/local/
+.env
+.env.*
+*.pem
+*.key
+
+# Build and simulator output
+/build/
+/build_id.v
+/jtag.cdf
+**/db/
+**/incremental_db/
+**/output_files/
+**/simulation/work/
+/sim/obj_dir*/
+/sim/**/obj_dir*/
+/sim/out/
+*.qws
+*.vcd
+*.fst
+*.wlf
+transcript
+c5_pin_model_dump.txt
+__pycache__/
+*.pyc
+*.exe
+*.o
+
+# Quartus generated
+/greybox_tmp/
+*.qarlog
+/PLLJ_PLLSPE_INFO.txt
+
+# ROM archives / images / traces; never add game data to source control
+*.zip
+*.7z
+*.rom
+*.bin
+*.nvm
+*.raw
+*.trace
+*.trc
+
+# Local captures (may contain game imagery)
+/snap/
+
+# OS/editor state
+.DS_Store
+Thumbs.db
+.vs/
+
+# development RBFs (release RBFs are added explicitly with git add -f)
+/Releases/*.rbf

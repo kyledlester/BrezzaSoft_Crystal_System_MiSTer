@@ -1,0 +1,17 @@
+* text=auto
+*.md text eol=lf
+*.sv text eol=lf
+*.v text eol=lf
+*.vhd text eol=lf
+*.sh text eol=lf
+*.ps1 text eol=crlf
+*.rbf binary
+*.py text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.lua text eol=lf
+*.mra text eol=lf
+*.tcl text eol=lf
+*.qsf text eol=lf
+*.sdc text eol=lf
+*.qip text eol=lf

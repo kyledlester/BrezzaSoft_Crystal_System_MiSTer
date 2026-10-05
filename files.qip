@@ -1,0 +1,4 @@
+set_global_assignment -name SDC_FILE Crystal.sdc
+set_global_assignment -name SYSTEMVERILOG_FILE Crystal.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_core.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_raster.sv
