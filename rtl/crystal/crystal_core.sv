@@ -69,7 +69,14 @@ module crystal_core (
     output wire        dbg_d_we,
     output wire [31:0] dbg_d_addr,
     output wire  [3:0] dbg_d_be,
-    output wire [31:0] dbg_d_data
+    output wire [31:0] dbg_d_data,
+    output wire [15:0] dbg_opcode,
+    output wire        dbg_took_irq,
+    output wire [31:0] dbg_sr,
+    output wire [31:0] dbg_sp,
+    output wire [31:0] dbg_er,
+    output wire [255:0] dbg_regs,
+    output wire        dbg_vblank_start
 );
     wire [31:0] dbg_d_wdata_w, dbg_d_rdata_w;
     assign dbg_d_data = dbg_d_we ? dbg_d_wdata_w : dbg_d_rdata_w;
@@ -169,9 +176,10 @@ module crystal_core (
         .ce_pix(ce_pix), .hcnt(hcnt), .vcnt(vcnt), .hblank(hb0), .vblank(vb0), .hsync(hs0), .vsync(vs0),
         .display_dest(display_dest), .crt_blank(crt_blank),
         .geo_hdisp(g_hdisp), .geo_vdisp(g_vdisp), .geo_vtot(g_vtot),
-        .dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_opcode(), .dbg_took_irq(), .dbg_illegal(dbg_illegal),
-        .dbg_sr(), .dbg_sp(), .dbg_er(), .dbg_regs(), .dbg_cpu_state(dbg_cpu_state), .dbg_io_ack(), .dbg_io_rdata(), .dbg_cpu_irq(), .dbg_irq_vector(),
-        .dbg_vblank_start(), .dbg_d_ack(dbg_d_ack), .dbg_d_we(dbg_d_we), .dbg_d_addr(dbg_d_addr), .dbg_d_be(dbg_d_be),
+        .dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_opcode(dbg_opcode), .dbg_took_irq(dbg_took_irq),
+        .dbg_illegal(dbg_illegal), .dbg_sr(dbg_sr), .dbg_sp(dbg_sp), .dbg_er(dbg_er), .dbg_regs(dbg_regs),
+        .dbg_cpu_state(dbg_cpu_state), .dbg_io_ack(), .dbg_io_rdata(), .dbg_cpu_irq(), .dbg_irq_vector(),
+        .dbg_vblank_start(dbg_vblank_start), .dbg_d_ack(dbg_d_ack), .dbg_d_we(dbg_d_we), .dbg_d_addr(dbg_d_addr), .dbg_d_be(dbg_d_be),
         .dbg_d_wdata(dbg_d_wdata_w), .dbg_d_rdata(dbg_d_rdata_w)
     );
 

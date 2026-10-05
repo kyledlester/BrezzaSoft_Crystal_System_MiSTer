@@ -196,17 +196,19 @@ module se3208_cpu (
 
     // ---- ALU helpers
     function automatic [35:0] addc(input [31:0] a, input [31:0] b, input cin);  // {C,V,r}
-        logic [32:0] s;
+        logic [33:0] s;
         logic c, v;
-        s = {1'b0, a} + {1'b0, b} + {32'd0, cin};
+        s = ({1'b0, a, 1'b1} + {1'b0, b, cin}) >> 1;   // carry-in folded into one adder
         c = ((a[31] & b[31]) | (~s[31] & (a[31] | b[31])));
         v = ((a[31] ^ s[31]) & (b[31] ^ s[31]));
         return {2'b00, c, v, s[31:0]};
     endfunction
     function automatic [35:0] subc(input [31:0] a, input [31:0] b, input cin);   // a - b - cin
         logic [31:0] r;
+        logic [32:0] t;
         logic c, v;
-        r = a - b - {31'd0, cin};
+        t = {a, 1'b1} + {~b, ~cin};                  // a + ~b + !cin = a - b - cin, one adder
+        r = t[32:1];
         c = ((b[31] & r[31]) | (~a[31] & (b[31] | r[31])));
         v = ((b[31] ^ a[31]) & (r[31] ^ a[31]));
         return {2'b00, c, v, r};

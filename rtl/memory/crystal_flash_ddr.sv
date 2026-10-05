@@ -47,7 +47,16 @@ module crystal_flash_ddr #(
     reg   [2:0] beat;
     reg   [1:0] pend_ans;             // a port waiting for its fill
 
-    wire hit0 = lval[0] && ltag[0] == r0_addr[26:6];
+    // port 0 is registered on entry (timing: its address comes straight from the CPU's address translation);
+    // a request answered in this clock is not seen again in the next one, while the requester still holds it
+    reg         q0_req;
+    reg  [26:0] q0_addr;
+    wire        go0 = q0_req && !r0_ack && hit0 && !(st == 2'd1 && fp == 1'b0);
+    always @(posedge clk) begin
+        q0_req  <= r0_req && !r0_ack && !go0 && rst_n;
+        q0_addr <= r0_addr;
+    end
+    wire hit0 = lval[0] && ltag[0] == q0_addr[26:6];
     wire hit1 = lval[1] && ltag[1] == r1_addr[26:6];
 
     always @(posedge clk) begin
@@ -62,10 +71,10 @@ module crystal_flash_ddr #(
             DDRAM_WE <= 1'b0;
         end else begin
             // hits answered in one cycle
-            if (r0_req && !r0_ack && hit0 && !(st == 2'd1 && fp == 1'b0)) begin
+            if (go0) begin
                 logic [63:0] q;
-                q = line[0][r0_addr[5:3]];
-                r0_data <= r0_addr[2] ? q[63:32] : q[31:0];
+                q = line[0][q0_addr[5:3]];
+                r0_data <= q0_addr[2] ? q[63:32] : q[31:0];
                 r0_ack  <= 1'b1;
             end
             if (r1_req && !r1_ack && hit1 && !(st == 2'd1 && fp == 1'b1)) begin
@@ -84,12 +93,12 @@ module crystal_flash_ddr #(
                     DDRAM_BE       <= w_be;
                     lval           <= 2'b00;
                     st             <= 2'd2;
-                end else if (r0_req && !r0_ack && !hit0) begin
+                end else if (q0_req && !r0_ack && !hit0) begin
                     fp <= 1'b0;
-                    ltag[0] <= r0_addr[26:6];
+                    ltag[0] <= q0_addr[26:6];
                     lval[0] <= 1'b0;
                     DDRAM_RD <= 1'b1; DDRAM_BURSTCNT <= 8'd8;
-                    DDRAM_ADDR <= (BASE >> 3) + {5'd0, r0_addr[26:6], 3'd0};
+                    DDRAM_ADDR <= (BASE >> 3) + {5'd0, q0_addr[26:6], 3'd0};
                     beat <= 3'd0;
                     st <= 2'd1;
                 end else if (r1_req && !r1_ack && !hit1) begin

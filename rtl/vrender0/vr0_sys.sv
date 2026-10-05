@@ -81,6 +81,11 @@ module vr0_sys (
     reg  [31:0] tm_con [0:3];
     reg  [15:0] tm_cnt [0:3];
     reg  [25:0] tm_left[0:3];
+    // period 2*(prescale+1)*(count+1), registered (timing). A start loads the counter two clocks after the
+    // TimerControl write (tm_st1 -> tm_st2), with the count compensated so the expiry clock is unchanged.
+    // Auto-reload uses the period of the previous clock.
+    reg  [25:0] tm_per [0:3];
+    reg   [3:0] tm_st1, tm_st2;
     reg   [3:0] tm_run;
     function automatic [4:0] tirq(input integer t);
         case (t)
@@ -156,6 +161,7 @@ module vr0_sys (
         if (!rst_n) begin
             inten <= 32'd0; intst <= 32'd0; int_high <= 3'd0;
             for (i = 0; i < 4; i++) begin tm_con[i] <= 32'h0000ff00; tm_run[i] <= 1'b0; tm_cnt[i] <= 16'd0; tm_left[i] <= 26'd0; end
+            tm_st1 <= 4'd0; tm_st2 <= 4'd0;
             for (i = 0; i < 2; i++) begin dma_ctrl[i] <= 16'd0; dma_wait[i] <= 3'd0; dma_src[i] <= 32'd0; dma_dst[i] <= 32'd0; dma_cnt[i] <= 24'd0; end
             dma_ph <= 2'd0; dma_req <= 1'b0;
             for (i = 0; i < 14; i++) crtc[i] <= 32'd0;
@@ -168,14 +174,20 @@ module vr0_sys (
             geo_hsw <= 8'd34; geo_hbp <= 8'd60; geo_vbp <= 8'd15;
         end else begin
             // ---------------- timers
+            tm_st1 <= 4'd0;
+            tm_st2 <= tm_st1;
             for (i = 0; i < 4; i++) begin
-                if (tm_run[i]) begin
-                    if (tm_left[i] <= 26'd1) begin
-                        if (tm_con[i][1]) tm_left[i] <= tperiod(tm_con[i], tm_cnt[i]);
+                logic [25:0] left;
+                tm_per[i] <= tperiod(tm_con[i], tm_cnt[i]);
+                // counter value before this clock: after a start it would be period - 1 by now
+                left = tm_st2[i] ? tm_per[i] - 26'd1 : tm_left[i];
+                if (tm_run[i] && !tm_st1[i]) begin
+                    if (left <= 26'd1) begin
+                        if (tm_con[i][1]) tm_left[i] <= tm_per[i];
                         else begin tm_run[i] <= 1'b0; tm_con[i][0] <= 1'b0; end
                         req_int[tirq(i)] <= 1'b1;
                     end else
-                        tm_left[i] <= tm_left[i] - 26'd1;
+                        tm_left[i] <= left - 26'd1;
                 end
             end
 
@@ -328,7 +340,7 @@ module vr0_sys (
                     nc = merge(tm_con[t], io_wdata, io_be);
                     tm_con[t] <= nc;
                     if (nc[0] != tm_con[t][0]) begin
-                        if (nc[0]) begin tm_run[t] <= 1'b1; tm_left[t] <= tperiod(nc, tm_cnt[t]); end
+                        if (nc[0]) begin tm_run[t] <= 1'b1; tm_st1[t] <= 1'b1; end
                         else tm_run[t] <= 1'b0;
                     end
                 end

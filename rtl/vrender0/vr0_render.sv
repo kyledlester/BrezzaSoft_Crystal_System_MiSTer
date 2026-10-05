@@ -188,6 +188,14 @@ module vr0_render (
     reg  [1:0] p3_lane;               // byte / nibble select
     reg [15:0] p4_tex16;              // 16bpp texel (P4)
     reg [15:0] p5_col;
+    reg [23:0] p5_fb;                 // frame word address of the P5 pixel (registered on P4 -> P5)
+    // P6 (destination read registered, blend products) and P7 (sum, clamp, segment write) never stall: they
+    // only carry pixels that P5 already committed to the current segment.
+    reg        p6_v, p7_v;
+    reg  [4:0] p6_idx, p7_idx;
+    reg        p6_blend, p7_blend;
+    reg [15:0] p6_src, p6_dst, p7_col;
+    reg [16:0] p7_pa [0:2], p7_pb [0:2];
     reg  [7:0] p4_pidx;               // palette index used for the P4 read (re-read while stalled)
     reg  [5:0] p2_tile_line_q;
     reg  [6:0] p3_line_q;
@@ -199,7 +207,8 @@ module vr0_render (
     // stall: a stage cannot advance when the next one is blocked
     wire p1_miss, p2_miss;
     wire seg_hold;                    // P5 cannot accept (segment switch in progress)
-    wire stall = p1_miss || p2_miss || seg_hold;
+    wire p5_hazard;                   // P5 blend pixel whose destination is still being written by P6/P7
+    wire stall = p1_miss || p2_miss || seg_hold || p5_hazard;
 
     // ---- RAM output hold: the RAM outputs belong to the pixels one stage further on. On the first clock of a
     //      stall they are captured and the captured values are used until the pipeline advances, so a cache
@@ -216,13 +225,14 @@ module vr0_render (
 
     // ---- P1: tile lookup (port A) ----------------------------------------------------------------
     // tile word address (texture word space): tile/2 + (ty>>3)*(w>>3) + (tx>>3)
+    // (computed on P0 -> P1 so the tag lookup starts from a register)
     reg  [21:0] p1_tile_wa;
-    always @* begin
+    function automatic [21:0] tile_wa_of(input [21:0] tx, input [21:0] ty);
         logic [21:0] tx_m, ty_m;
-        tx_m = {12'd0, p1_tx[9:0] & maskw};
-        ty_m = {12'd0, p1_ty[9:0] & maskh};
-        p1_tile_wa = q_tile[22:1] + ((ty_m >> 3) << (rs_wlog)) + (tx_m >> 3);
-    end
+        tx_m = {12'd0, tx[9:0] & maskw};
+        ty_m = {12'd0, ty[9:0] & maskh};
+        return q_tile[22:1] + ((ty_m >> 3) << (rs_wlog)) + (tx_m >> 3);
+    endfunction
     wire [5:0]  p1_line = p1_tile_wa[9:4];
     wire        p1_need_tile = p1_v && !p1_skip && q_tex && rs_tiled;
     assign p1_miss = p1_need_tile && !(tt_val[p1_line] && tt_tag[p1_line] == p1_tile_wa[21:10]);
@@ -246,8 +256,14 @@ module vr0_render (
             default: begin b = q_texaddr + (off << 1); p2_word = b[22:1]; p2_lane = 2'b00; end         // 16bpp
         endcase
     end
-    wire [6:0]  p2_line = p2_word[10:4];
-    assign p2_miss = p2_v && !p2_skip_eff && q_tex && !(tc_val[p2_line] && tc_tag[p2_line] == p2_word[21:11]);
+    // ---- P2W: texel tag check + texel read (address registered from P2)
+    reg         p2w_v, p2w_skip;
+    reg   [9:0] p2w_x;
+    reg   [8:0] p2w_y;
+    reg  [21:0] p2w_word;
+    reg   [1:0] p2w_lane;
+    wire [6:0]  p2_line = p2w_word[10:4];
+    assign p2_miss = p2w_v && !p2w_skip && q_tex && !(tc_val[p2_line] && tc_tag[p2_line] == p2w_word[21:11]);
 
     // ---- P3: texel extract -> palette index; P4: colour ----------------------------------------
     reg  [7:0] p3_pidx;
@@ -262,8 +278,12 @@ module vr0_render (
     wire [15:0] p4_col = rs_fmt[1] ? p4_tex16 : pal_e;
 
     // ---- frame segment ownership ----------------------------------------------------------------
-    wire [23:0] p5_fbword = FB_BASE + {1'b0, q_dest[22:1]} + {5'd0, p5_y, 10'd0} + {14'd0, p5_x};
+    wire [23:0] p4_fbword = FB_BASE + {1'b0, q_dest[22:1]} + {5'd0, p4_y, 10'd0} + {14'd0, p4_x};
+    wire [23:0] p5_fbword = p5_fb;
     wire        p5_in_seg = seg_v && (p5_fbword[23:5] == seg_base[23:5]);
+    wire        p67_busy  = p6_v || p7_v;
+    assign p5_hazard = p5_v && !p5_skip && q_blend_any &&
+                       ((p6_v && p6_idx == p5_fb[4:0]) || (p7_v && p7_idx == p5_fb[4:0]));
     assign seg_hold = p5_v && !p5_skip && !(p5_in_seg && (!q_blend_any || seg_loaded));
     wire q_blend_any = q_tex ? q_blend : q_fill_alpha;
 
@@ -281,19 +301,6 @@ module vr0_render (
         if (sel[5]) m = 9'h100 - m;
         return m;
     endfunction
-    function automatic [15:0] do_alpha(input [15:0] src, input [15:0] dst, input [5:0] sa, input [5:0] da,
-                                       input [23:0] scol, input [23:0] dcol);
-        logic [7:0] s [0:2], d [0:2];
-        logic [16:0] acc;
-        logic [7:0] o [0:2];
-        s[2] = x5(src[15:11]); s[1] = x6(src[10:5]); s[0] = x5(src[4:0]);
-        d[2] = x5(dst[15:11]); d[1] = x6(dst[10:5]); d[0] = x5(dst[4:0]);
-        for (int ch = 0; ch < 3; ch++) begin
-            acc = s[ch] * fsel(sa, scol, dcol, s[ch], d[ch], ch) + d[ch] * fsel(da, scol, dcol, s[ch], d[ch], ch);
-            o[ch] = (acc[16:8] > 9'd255) ? 8'd255 : acc[15:8];
-        end
-        return {o[2][7:3], o[1][7:2], o[0][7:3]};
-    endfunction
     function automatic [15:0] do_shade(input [15:0] src, input [23:0] sh);
         logic [15:0] r, g, b;
         r = x5(src[15:11]) * sh[23:16];
@@ -302,11 +309,28 @@ module vr0_render (
         return {r[15:11], g[15:10], b[15:11]};
     endfunction
 
-    // P5 result
-    wire [15:0] p5_dst = seg[p5_fbword[4:0]];
-    wire [15:0] p5_out = q_blend_any ? do_alpha(p5_col, p5_dst,
-                                                 q_tex ? rs_src_blend : rs_src_blend, rs_dst_blend, rs_src_col, rs_dst_col)
-                                     : p5_col;
+    // P6: blend products (MAME: (s * fsel(src) + d * fsel(dst)) >> 8 per channel, saturated)
+    logic [16:0] p6_pa [0:2], p6_pb [0:2];
+    always @* begin
+        logic [7:0] sv [0:2], dv [0:2];
+        sv[2] = x5(p6_src[15:11]); sv[1] = x6(p6_src[10:5]); sv[0] = x5(p6_src[4:0]);
+        dv[2] = x5(p6_dst[15:11]); dv[1] = x6(p6_dst[10:5]); dv[0] = x5(p6_dst[4:0]);
+        for (int ch = 0; ch < 3; ch++) begin
+            p6_pa[ch] = sv[ch] * fsel(rs_src_blend, rs_src_col, rs_dst_col, sv[ch], dv[ch], ch);
+            p6_pb[ch] = dv[ch] * fsel(rs_dst_blend, rs_src_col, rs_dst_col, sv[ch], dv[ch], ch);
+        end
+    end
+    // P7: sum and saturate
+    logic [15:0] p7_out;
+    always @* begin
+        logic [16:0] acc;
+        logic [7:0] o [0:2];
+        for (int ch = 0; ch < 3; ch++) begin
+            acc = p7_pa[ch] + p7_pb[ch];
+            o[ch] = (acc[16:8] > 9'd255) ? 8'd255 : acc[15:8];
+        end
+        p7_out = p7_blend ? {o[2][7:3], o[1][7:2], o[0][7:3]} : p7_col;
+    end
 
     assign dbg = {rst, filling, p1_miss, p2_miss, seg_hold, g_run, p1_v, p2_v, p3_v, p4_v, p5_v, seg_v, seg_loaded,
                   t_req, f_req, w_req, p5_in_seg, q_blend_any, p5_x, 1'b0};
@@ -317,17 +341,22 @@ module vr0_render (
 
     // ------------------------------------------------------------------ main sequencer
     integer i;
+    reg        snoop_q;
+    reg [21:4] snoop_a;
     always @(posedge clk) begin
         done   <= 1'b0;
         pal_we <= 1'b0;
         tc_we  <= 1'b0;
         if (rst != R_IDLE) stat_busy_cycles <= stat_busy_cycles + 32'd1;
 
-        // texture cache snoop (CPU/DMA writes to texture RAM)
-        if (snoop && snoop_addr[23:22] == 2'b01) begin
-            if (tc_tag[snoop_addr[10:4]] == snoop_addr[21:11]) tc_val[snoop_addr[10:4]] <= 1'b0;
-            if (tt_tag[snoop_addr[9:4]] == snoop_addr[21:10]) tt_val[snoop_addr[9:4]] <= 1'b0;
-            if (filling && snoop_addr[21:4] == fill_wa[21:4]) fill_dirty <= 1'b1;
+        // texture cache snoop (CPU/DMA writes to texture RAM), one clock after the write was issued (the
+        // write itself reaches SDRAM later: texture-RAM writes are synchronous in the D-cache)
+        snoop_q <= snoop && snoop_addr[23:22] == 2'b01;
+        snoop_a <= snoop_addr[21:4];
+        if (snoop_q) begin
+            if (tc_tag[snoop_a[10:4]] == snoop_a[21:11]) tc_val[snoop_a[10:4]] <= 1'b0;
+            if (tt_tag[snoop_a[9:4]] == snoop_a[21:10]) tt_val[snoop_a[9:4]] <= 1'b0;
+            if (filling && snoop_a == fill_wa[21:4]) fill_dirty <= 1'b1;
         end
 
         if (!rst_n) begin
@@ -339,7 +368,7 @@ module vr0_render (
             filling <= 1'b0;
             seg_v <= 1'b0; seg_m <= 32'd0; seg_loaded <= 1'b0;
             g_run <= 1'b0;
-            p1_v <= 1'b0; p2_v <= 1'b0; p3_v <= 1'b0; p4_v <= 1'b0; p5_v <= 1'b0;
+            p1_v <= 1'b0; p2_v <= 1'b0; p2w_v <= 1'b0; p3_v <= 1'b0; p4_v <= 1'b0; p5_v <= 1'b0; p6_v <= 1'b0; p7_v <= 1'b0;
             stat_pixels <= 32'd0; stat_busy_cycles <= 32'd0;
             rs_tx <= 0; rs_ty <= 0; rs_txdx <= 32'h200; rs_tydx <= 0; rs_txdy <= 0; rs_tydy <= 32'h200;
             rs_src_col <= 0; rs_dst_col <= 0; rs_shade <= 0; rs_trans <= 0; rs_src_blend <= 0; rs_dst_blend <= 0;
@@ -477,7 +506,7 @@ module vr0_render (
             end
             R_FILL: begin
                 // pipeline runs (below); finished when the generator is done and the pipe is empty
-                if (!g_run && !p1_v && !p2_v && !p3_v && !p4_v && !p5_v && !filling) begin
+                if (!g_run && !p1_v && !p2_v && !p2w_v && !p3_v && !p4_v && !p5_v && !p67_busy && !filling) begin
                     rst <= R_FLUSH;
                 end
             end
@@ -512,10 +541,10 @@ module vr0_render (
                 // ---- texture cache fills (P2 miss first: it is the older pixel)
                 if (!filling && (p2_miss || p1_miss) && !t_req) begin
                     logic [21:0] wa;
-                    wa = p2_miss ? p2_word : p1_tile_wa;
+                    wa = p2_miss ? p2w_word : p1_tile_wa;
                     filling   <= 1'b1;
                     fill_fin  <= 2'd0;
-                    fill_dirty <= 1'b0;
+                    fill_dirty <= snoop_q && snoop_a == wa[21:4];
                     fill_wa   <= wa;
                     fill_tt   <= !p2_miss;
                     fill_i    <= 4'd0;
@@ -551,7 +580,7 @@ module vr0_render (
                 end
 
                 // ---- segment management for P5
-                if (p5_v && !p5_skip && !p5_in_seg && !f_req && !w_req) begin
+                if (p5_v && !p5_skip && !p5_in_seg && !f_req && !w_req && !p67_busy) begin
                     if (seg_v && seg_m != 32'd0) begin
                         // write the old segment back
                         w_req  <= 1'b1;
@@ -569,7 +598,7 @@ module vr0_render (
                     if (w_wnext) wb_i <= wb_i + 5'd1;
                     if (w_done) begin w_req <= 1'b0; seg_v <= 1'b0; seg_m <= 32'd0; end
                 end
-                if (p5_v && !p5_skip && p5_in_seg && q_blend_any && !seg_loaded && !f_req) begin
+                if (p5_v && !p5_skip && p5_in_seg && q_blend_any && !seg_loaded && !f_req && !p67_busy) begin
                     f_req  <= 1'b1;
                     f_addr <= seg_base;
                     f_len  <= 6'd32;
@@ -583,15 +612,26 @@ module vr0_render (
                     if (f_done) begin f_req <= 1'b0; seg_loaded <= 1'b1; end
                 end
 
+                // ---- P7: segment write; P6 -> P7
+                if (p7_v) begin
+                    seg[p7_idx]   <= p7_out;
+                    seg_m[p7_idx] <= 1'b1;
+                end
+                p7_v <= p6_v; p7_idx <= p6_idx; p7_blend <= p6_blend; p7_col <= p6_src;
+                for (int ch = 0; ch < 3; ch++) begin p7_pa[ch] <= p6_pa[ch]; p7_pb[ch] <= p6_pb[ch]; end
+                p6_v <= 1'b0;
                 if (!stall) begin
-                    // ---- P5: store
+                    // ---- P5 -> P6: destination read
                     if (p5_v && !p5_skip) begin
-                        seg[p5_fbword[4:0]]   <= p5_out;
-                        seg_m[p5_fbword[4:0]] <= 1'b1;
+                        p6_v     <= 1'b1;
+                        p6_idx   <= p5_fb[4:0];
+                        p6_blend <= q_blend_any;
+                        p6_src   <= p5_col;
+                        p6_dst   <= seg[p5_fb[4:0]];
                         stat_pixels <= stat_pixels + 32'd1;
                     end
                     // ---- P4 -> P5: transparency + shade
-                    p5_v <= p4_v; p5_x <= p4_x; p5_y <= p4_y;
+                    p5_v <= p4_v; p5_x <= p4_x; p5_y <= p4_y; p5_fb <= p4_fbword;
                     if (q_tex) begin
                         p5_skip <= p4_skip || (p4_col == q_transc);
                         p5_col  <= q_shade ? do_shade(p4_col, q_shadec) : p4_col;
@@ -603,9 +643,12 @@ module vr0_render (
                     p4_v <= p3_v; p4_x <= p3_x; p4_y <= p3_y; p4_skip <= p3_skip;
                     p4_tex16 <= tcb_e;
                     p4_pidx  <= p3_pidx;
-                    // ---- P2 -> P3
-                    p3_v <= p2_v; p3_x <= p2_x; p3_y <= p2_y; p3_skip <= p2_skip_eff;
-                    p3_word <= p2_word; p3_lane <= p2_lane;
+                    // ---- P2W -> P3
+                    p3_v <= p2w_v; p3_x <= p2w_x; p3_y <= p2w_y; p3_skip <= p2w_skip;
+                    p3_word <= p2w_word; p3_lane <= p2w_lane;
+                    // ---- P2 -> P2W
+                    p2w_v <= p2_v; p2w_x <= p2_x; p2w_y <= p2_y; p2w_skip <= p2_skip_eff;
+                    p2w_word <= p2_word; p2w_lane <= p2_lane;
                     // ---- P1 -> P2
                     p2_v <= p1_v; p2_x <= p1_x; p2_y <= p1_y; p2_skip <= p1_skip;
                     p2_sub <= {p1_ty[2:0] & maskh[2:0], p1_tx[2:0] & maskw[2:0]};
@@ -618,6 +661,7 @@ module vr0_render (
                         ty = g_ty[30:9];
                         p1_x <= g_x; p1_y <= g_y;
                         p1_tx <= tx; p1_ty <= ty;
+                        p1_tile_wa <= tile_wa_of(tx, ty);
                         p1_skip <= q_tex && q_clamp && ({g_tx[31], tx} > {13'd0, maskw} || {g_ty[31], ty} > {13'd0, maskh});
                         if (g_x == q_endx) begin
                             if (g_y == q_endy) g_run <= 1'b0;
@@ -642,11 +686,11 @@ module vr0_render (
     //      the pipeline is stalled the same addresses are re-read so the outputs stay with their pixels.
     always @* begin
         tca_a  = {p1_line, p1_tile_wa[3:0]};
-        tcb_a  = {p2_line, p2_word[3:0]};
+        tcb_a  = {p2_line, p2w_word[3:0]};
         pal_ra = p3_pidx;
     end
     always @(posedge clk) if (!stall || rst != R_FILL) begin
         p2_tile_line_q <= p1_line; p2_tile_w_q <= p1_tile_wa[3:0];
-        p3_line_q <= p2_line; p3_w_q <= p2_word[3:0];
+        p3_line_q <= p2_line; p3_w_q <= p2w_word[3:0];
     end
 endmodule

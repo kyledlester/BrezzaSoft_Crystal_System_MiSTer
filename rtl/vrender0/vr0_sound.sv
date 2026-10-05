@@ -92,6 +92,8 @@ module vr0_sound #(
     reg signed [31:0] env;
     reg   [3:0] stage;
     reg   [1:0] lvl;
+    reg         env_ph;               // envelope level: 0 = rate product, 1 = add / target compare
+    reg signed [31:0] rate_q;
     reg         ended;
 
     wire [7:0]  modes  = w[5][14:8];
@@ -238,6 +240,7 @@ module vr0_sound #(
                 end else
                     cur <= nc;
                 lvl <= 2'd0;
+                env_ph <= 1'b0;
                 st <= E_ENV;
             end
             E_ENV: begin
@@ -245,23 +248,28 @@ module vr0_sound #(
                     // MAME: the voice ended -> 'break' out of the channel loop for this sample (cur written back)
                     st <= E_WB;
                 end else begin
-                    // volume (once) and the envelope stages, sequentially like MAME's level loop
-                    if (lvl == 2'd0) smp <= (smp * (env >>> 16)) >>> 8;
-                    if (modes[2] && stage[lvl]) begin
-                        logic signed [31:0] rate, ne;
+                    // volume (once) and the envelope stages, sequentially like MAME's level loop; each level
+                    // takes two clocks (rate product, then add and target compare)
+                    env_ph <= !env_ph;
+                    if (!env_ph) begin
                         logic signed [63:0] p;
+                        if (lvl == 2'd0) smp <= (smp * (env >>> 16)) >>> 8;
                         p = env_rate(lvl) * $signed({11'd0, div});
-                        rate = $signed(p[31:0]) >>> 16;
-                        ne = env + rate;
-                        env <= ne;
-                        if (rate > 0) begin
-                            if (((ne >>> 16) & 32'h7f) >= {25'd0, env_target(lvl)}) stage <= stage << 1;
-                        end else if (rate < 0) begin
-                            if (((ne >>> 16) & 32'h7f) <= {25'd0, env_target(lvl)}) stage <= stage << 1;
+                        rate_q <= $signed(p[31:0]) >>> 16;
+                    end else begin
+                        if (modes[2] && stage[lvl]) begin
+                            logic signed [31:0] ne;
+                            ne = env + rate_q;
+                            env <= ne;
+                            if (rate_q > 0) begin
+                                if (((ne >>> 16) & 32'h7f) >= {25'd0, env_target(lvl)}) stage <= stage << 1;
+                            end else if (rate_q < 0) begin
+                                if (((ne >>> 16) & 32'h7f) <= {25'd0, env_target(lvl)}) stage <= stage << 1;
+                            end
                         end
+                        if (lvl == 2'd3) st <= E_MIX;
+                        lvl <= lvl + 2'd1;
                     end
-                    if (lvl == 2'd3) st <= E_MIX;
-                    lvl <= lvl + 2'd1;
                 end
             end
             E_MIX: begin

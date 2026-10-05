@@ -80,6 +80,7 @@ int main(int argc, char **argv)
     std::set<int> snap_at;
     std::multimap<int, std::string> inputs;
     bool turbo = false;
+    std::string wav;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto nx = [&]() { return std::string(argv[++i]); };
@@ -90,7 +91,11 @@ int main(int argc, char **argv)
         else if (a == "--out") out = nx();
         else if (a == "--input") { std::string v = nx(); inputs.emplace(atoi(v.c_str()), v.substr(v.find(':') + 1)); }
         else if (a == "--turbo") turbo = true;
+        else if (a == "--wav") wav = nx();
     }
+    FILE *fw = wav.empty() ? nullptr : fopen(wav.c_str(), "wb");
+    if (fw) { uint8_t h[44] = {}; fwrite(h, 1, 44, fw); }
+    uint64_t wav_samples = 0, wav_nonzero = 0;
     auto s0 = read_file(stream_dir + "/index0.bin");
     auto s1 = read_file(stream_dir + "/index1.bin");
 
@@ -207,6 +212,12 @@ int main(int argc, char **argv)
             }
         }
         st_hist[t->dbg_cpu_state & 31]++;
+        if (fw && cyc % 1944 == 0) {   // one output sample per 1944 clk_sys (44.19 kHz)
+            int16_t s2[2] = {(int16_t)t->audio_l, (int16_t)t->audio_r};
+            fwrite(s2, 2, 2, fw);
+            wav_samples++;
+            if (s2[0] || s2[1]) wav_nonzero++;
+        }
         if (t->dbg_illegal) { if (illegal++ < 4) printf("ILLEGAL opcode at pc %08x\n", t->dbg_pc); }
         if (t->ce_pix) {
             if (!t->hblank && !t->vblank) {
@@ -249,6 +260,16 @@ int main(int argc, char **argv)
             hb_q = t->hblank;
             vb_q = t->vblank;
         }
+    }
+    if (fw) {
+        uint32_t rate = 44191, bytes = uint32_t(wav_samples * 4);
+        auto w32 = [&](uint32_t v) { fwrite(&v, 4, 1, fw); };
+        auto w16 = [&](uint16_t v) { fwrite(&v, 2, 1, fw); };
+        fseek(fw, 0, SEEK_SET);
+        fwrite("RIFF", 1, 4, fw); w32(36 + bytes); fwrite("WAVEfmt ", 1, 8, fw); w32(16); w16(1); w16(2); w32(rate);
+        w32(rate * 4); w16(4); w16(16); fwrite("data", 1, 4, fw); w32(bytes);
+        fclose(fw);
+        printf("audio: %llu samples, %llu nonzero\n",(unsigned long long)wav_samples, (unsigned long long)wav_nonzero);
     }
     bool ok = sd.violations == 0 && illegal == 0;
     {

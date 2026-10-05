@@ -86,6 +86,9 @@ module crystal_sdram #(
     reg   [5:0]   cl_rpend[0:NC-1];   // read words still to come back
     // registered per-client flags (valid when cl_fresh)
     reg  [NC-1:0] cl_hit, cl_miss, cl_closed, cl_owner_ok, cl_fresh;
+    // per-client copies of the bank timing flags of the client's bank (same freshness rule: any command on
+    // that bank, a refresh or a new request makes them stale)
+    reg  [NC-1:0] cl_t_col, cl_t_pre, cl_t_act;
 
     // read return pipeline: client id per stage (valid bit + id)
     reg  [3:0] rp_v;
@@ -120,9 +123,9 @@ module crystal_sdram #(
             logic [1:0] bk;
             logic ok_col, ok_pre, ok_act;
             bk = cl_addr[c][23:22];
-            ok_col = cl_hit[c] && f_rcd[bk] && (cl_we[c] ? f_rw : 1'b1);
-            ok_pre = cl_miss[c] && f_ras[bk] && f_wr[bk] && f_rd1[bk];
-            ok_act = cl_closed[c] && f_rp[bk] && f_rrd && f_rc[bk];
+            ok_col = cl_hit[c] && cl_t_col[c] && (cl_we[c] ? f_rw : 1'b1);
+            ok_pre = cl_miss[c] && cl_t_pre[c];
+            ok_act = cl_closed[c] && cl_t_act[c] && f_rrd;
             if (cl_act[c] && cl_fresh[c] && cl_owner_ok[c] && (ok_col || ok_pre || ok_act)) begin
                 sel_v = 1'b1; sel_c = c[2:0];
                 sel_cmd = ok_col ? (cl_we[c] ? CMD_WR : CMD_RD) : (ok_pre ? CMD_PRE : CMD_ACT);
@@ -151,6 +154,13 @@ module crystal_sdram #(
         dq_q     <= dq_i;
 
         // timers (saturating) and the registered "rule satisfied" flags for the next clock
+        for (c = 0; c < NC; c++) begin
+            logic [1:0] bk;
+            bk = cl_addr[c][23:22];
+            cl_t_col[c] <= b_tact[bk] + 4'd1 >= T_RCD || b_tact[bk] == SAT;
+            cl_t_pre[c] <= (b_tact[bk] + 4'd1 >= T_RAS || b_tact[bk] == SAT) && (b_twr[bk] + 4'd1 >= T_WR || b_twr[bk] == SAT);
+            cl_t_act[c] <= (b_tpre[bk] + 4'd1 >= T_RP || b_tpre[bk] == SAT) && (b_tact[bk] + 4'd1 >= T_RC || b_tact[bk] == SAT);
+        end
         for (i = 0; i < 4; i++) begin
             if (b_tact[i] != SAT) b_tact[i] <= b_tact[i] + 4'd1;
             if (b_tpre[i] != SAT) b_tpre[i] <= b_tpre[i] + 4'd1;

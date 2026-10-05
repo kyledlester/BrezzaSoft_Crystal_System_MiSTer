@@ -176,9 +176,16 @@ module crystal_board (
     endfunction
 
     // instruction fetches: memory regions only (unmapped/I-O fetches read 0)
-    wire [28:0] i_phys = phys_of(i_addr, bank, flash_banks);
-    wire        i_erased = (i_addr >= 32'h05000000 && i_addr < 32'h06000000 && !i_phys[28]);
+    // The CPU issues a fetch only for the address it presented on i_pre_addr in the previous clock and keeps
+    // presenting it (PC) while the fetch waits, so the translation is registered from i_pre_addr (the bank
+    // register cannot change while an instruction fetch is outstanding).
     wire [28:0] i_pre_phys = phys_of(i_pre_addr, bank, flash_banks);
+    reg  [28:0] i_phys;
+    reg         i_erased;
+    always @(posedge clk) begin
+        i_phys   <= i_pre_phys;
+        i_erased <= i_pre_addr >= 32'h05000000 && i_pre_addr < 32'h06000000 && !i_pre_phys[28];
+    end
     assign mi_pre_addr = i_pre_phys[27:0];
     assign mi_req  = i_req && i_phys[28];
     assign mi_addr = i_phys[27:0];
