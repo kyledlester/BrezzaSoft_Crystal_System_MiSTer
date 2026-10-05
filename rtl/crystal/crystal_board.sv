@@ -60,6 +60,9 @@ module crystal_board (
     output wire        vsync,
     output wire [22:0] display_dest,
     output wire        crt_blank,
+    output wire  [9:0] geo_hdisp,
+    output wire  [9:0] geo_vdisp,
+    output wire  [9:0] geo_vtot,
 
     // debug
     output wire        dbg_retire,
@@ -71,6 +74,7 @@ module crystal_board (
     output wire [31:0] dbg_sp,
     output wire [31:0] dbg_er,
     output wire [255:0] dbg_regs,
+    output wire  [4:0] dbg_cpu_state,
     output wire        dbg_io_ack,        // a non-memory data access completed (value in dbg_io_rdata)
     output wire [31:0] dbg_io_rdata,
     output wire        dbg_cpu_irq,
@@ -116,7 +120,7 @@ module crystal_board (
         .d_req(d_req), .d_we(d_we), .d_addr(d_addr), .d_be(d_be), .d_wdata(d_wdata), .d_ack(d_ack), .d_rdata(d_rdata),
         .irq(cpu_irq), .nmi(1'b0), .irq_vector(irq_vector), .iack(iack),
         .retire(retire), .illegal(dbg_illegal), .dbg_pc(dbg_pc), .dbg_opcode(dbg_opcode), .dbg_took_irq(dbg_took_irq),
-        .dbg_sr(dbg_sr), .dbg_sp(dbg_sp), .dbg_er(dbg_er), .dbg_regs(dbg_regs)
+        .dbg_sr(dbg_sr), .dbg_sp(dbg_sp), .dbg_er(dbg_er), .dbg_regs(dbg_regs), .dbg_state(dbg_cpu_state)
     );
     assign dbg_retire     = retire;
     assign dbg_d_ack      = d_ack;
@@ -312,6 +316,9 @@ module crystal_board (
     wire [4:0]  g_tpp;
     wire [7:0]  g_hsw, g_hbp, g_vbp;
     wire        vb_irq_active;
+    assign geo_hdisp = g_hdisp;
+    assign geo_vdisp = g_vdisp;
+    assign geo_vtot  = g_vtot;
     reg         frame_odd;
     reg         vb_q;
     wire [9:0]  hs_start = g_htot - {2'b0, g_hbp} - {2'b0, g_hsw};

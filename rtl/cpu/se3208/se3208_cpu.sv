@@ -46,7 +46,8 @@ module se3208_cpu (
     output wire [31:0] dbg_sr,
     output wire [31:0] dbg_sp,
     output wire [31:0] dbg_er,
-    output wire [255:0] dbg_regs
+    output wire [255:0] dbg_regs,
+    output wire  [4:0] dbg_state
 );
     // ------------------------------------------------------------------ architectural state
     reg [31:0] R [0:7];
@@ -144,6 +145,7 @@ module se3208_cpu (
         S_MEM, S_MEMW, S_LOADWB, S_STACK, S_DONE, S_IRQ0, S_IRQ1, S_IRQ2, S_HALTED
     } st_t;
     st_t st;
+    assign dbg_state = st;
 
     reg  [15:0] ir;
     op_t        op;

@@ -1,9 +1,8 @@
-// BrezzaSoft Crystal System MiSTer core -- board top (M0 skeleton).
+// BrezzaSoft Crystal System MiSTer core -- core top: loader, board, memory system, scanout.
 // Copyright (C) 2026 Kyle Lester. SPDX-License-Identifier: GPL-3.0-or-later
 //
-// M0: clock/reset plumbing, a fixed MAME-default raster (455 x 262 pixel clocks, 320 x 240 visible,
-// pixel clock = clk_sys / 12 = 7.159 MHz, 60.05 Hz) with a test pattern, silent audio, idle SDRAM/DDR3.
-// Later milestones replace the pattern with the VRender0 CRTC scanout.
+// docs/ARCHITECTURE.md. SDRAM clients (priority order): 0 scanout, 1 sound, 2 instruction cache, 3 CPU/DMA data,
+// 4 video engine reads, 5 video engine writes, 6 loader.
 module crystal_core (
     input  wire        clk_sys,
     input  wire        pll_locked,
@@ -18,8 +17,12 @@ module crystal_core (
 
     input  wire [31:0] joy0, joy1, joy2, joy3,
     input  wire        sw_test,
+    input  wire        cpu_turbo,
+    input  wire [64:0] rtc,
 
-    inout  wire [15:0] SDRAM_DQ,
+    input  wire [15:0] SDRAM_DQ_I,
+    output wire [15:0] SDRAM_DQ_O,
+    output wire        SDRAM_DQ_OE,
     output wire [12:0] SDRAM_A,
     output wire        SDRAM_DQML,
     output wire        SDRAM_DQMH,
@@ -43,71 +46,269 @@ module crystal_core (
 
     output wire        ce_pix,
     output wire  [7:0] r, g, b,
-    output wire        hblank, vblank, hsync, vsync,
+    output reg         hblank, vblank, hsync, vsync,
 
     output wire signed [15:0] audio_l,
     output wire signed [15:0] audio_r,
 
     output wire        rom_loading,
-    output wire        cpu_running
+    output wire        cpu_running,
+
+    // simulation / diagnostics
+    output wire        dbg_retire,
+    output wire [31:0] dbg_pc,
+    output wire        dbg_illegal,
+    output wire [15:0] dbg_underflows,
+    output wire  [4:0] dbg_cpu_state
 );
+    // ------------------------------------------------------------------ loader and reset
+    wire        ld_busy, ld_loaded;
+    wire  [7:0] game_id, dsw;
+    wire  [3:0] flash_banks;
+    wire        lf_req, lf_ack;
+    wire [26:0] lf_addr;
+    wire [63:0] lf_data;
+    wire  [7:0] lf_be;
+    wire        ls_req, ls_wnext, ls_done;
+    wire [23:0] ls_addr;
+    wire  [5:0] ls_len;
+    wire [15:0] ls_wdata;
 
-    // ---------------------------------------------------------------- reset
-    reg [15:0] rst_cnt = '0;
-    reg        rst_n   = 1'b0;
+    crystal_loader loader (
+        .clk(clk_sys), .pll_locked(pll_locked),
+        .ioctl_download(ioctl_download), .ioctl_index(ioctl_index), .ioctl_wr(ioctl_wr), .ioctl_addr(ioctl_addr),
+        .ioctl_dout(ioctl_dout), .ioctl_wait(ioctl_wait),
+        .busy(ld_busy), .game_id(game_id), .flash_banks(flash_banks), .dsw(dsw), .loaded(ld_loaded),
+        .f_req(lf_req), .f_addr(lf_addr), .f_data(lf_data), .f_be(lf_be), .f_ack(lf_ack),
+        .s_req(ls_req), .s_addr(ls_addr), .s_len(ls_len), .s_wdata(ls_wdata), .s_wnext(ls_wnext), .s_done(ls_done)
+    );
+    assign rom_loading = ld_busy;
+
+    reg [7:0] rst_cnt;
+    reg       board_rst_n;
     always @(posedge clk_sys) begin
-        if (!pll_locked || reset_request || ioctl_download) begin
-            rst_cnt <= '0;
-            rst_n   <= 1'b0;
-        end else if (!(&rst_cnt)) begin
-            rst_cnt <= rst_cnt + 16'd1;
-        end else begin
-            rst_n <= 1'b1;
-        end
+        if (!pll_locked || ld_busy || reset_request || !sd_ready) begin
+            rst_cnt <= 8'd0;
+            board_rst_n <= 1'b0;
+        end else if (!(&rst_cnt)) rst_cnt <= rst_cnt + 8'd1;
+        else board_rst_n <= 1'b1;
     end
+    assign cpu_running = board_rst_n;
 
-    // ---------------------------------------------------------------- raster (MAME default)
-    wire [9:0] hcnt;
-    wire [9:0] vcnt;
-    crystal_raster raster (
-        .clk(clk_sys), .rst_n(rst_n),
-        .htotal(10'd455), .hdisp(10'd320), .hs_start(10'd336), .hs_end(10'd370),
-        .vtotal(10'd262), .vdisp(10'd240), .vs_start(10'd244), .vs_end(10'd247),
-        .div(6'd12),
-        .ce_pix(ce_pix), .hcnt(hcnt), .vcnt(vcnt),
-        .hblank(hblank), .vblank(vblank), .hsync(hsync), .vsync(vsync)
+    // ------------------------------------------------------------------ inputs (MiSTer joystick -> MAME ports)
+    // joystick bits: 0 right, 1 left, 2 down, 3 up, 4 B1, 5 B2, 6 B3, 7 B4, 8 start, 9 coin, 10 service
+    function automatic [7:0] pl(input [31:0] j);   // {right,left,down,up,b4,b3,b2,b1} for one player, active high
+        return {j[0], j[1], j[2], j[3], j[7], j[6], j[5], j[4]};
+    endfunction
+    wire [7:0] p1 = pl(joy0), p2 = pl(joy1), p3 = pl(joy2), p4 = pl(joy3);
+    // P1_P2: b0 P1 B1, b1 P2 B1, b2 P1 B2, b3 P2 B2, b4 P1 B3, b5 P2 B3, b6 P1 B4, b7 P2 B4,
+    //        b16 P1 up, b17 P2 up, b18 P1 down, b19 P2 down, b20 P1 left, b21 P2 left, b22 P1 right, b23 P2 right
+    function automatic [31:0] pair(input [7:0] a, input [7:0] c);
+        return ~{8'h00,
+                 c[7], a[7], c[6], a[6], c[5], a[5], c[4], a[4],
+                 8'h00,
+                 c[3], a[3], c[2], a[2], c[1], a[1], c[0], a[0]};
+    endfunction
+    wire [31:0] in_p1p2 = pair(p1, p2);
+    wire [31:0] in_p3p4 = pair(p3, p4);
+    // SYSTEM: b0-3 start1-4, b4 coin1, b5 coin2, b6 service1, b7 test (all active low)
+    wire  [7:0] in_system = ~{sw_test, joy0[10] | joy1[10], joy1[9], joy0[9], joy3[8], joy2[8], joy1[8], joy0[8]};
+
+    // ------------------------------------------------------------------ board
+    reg         rtc_load;
+    wire  [9:0] g_hdisp, g_vdisp, g_vtot;
+    wire        mi_req, mi_ack, md_req, md_we, md_ack, mv_req, mv_ack;
+    wire [27:0] mi_addr, md_addr, mv_addr;
+    wire [15:0] mi_data, mv_data;
+    wire  [3:0] md_be;
+    wire [31:0] md_wdata, md_rdata;
+    wire [22:0] display_dest;
+    wire        crt_blank;
+    wire [9:0]  hcnt, vcnt;
+    wire        hb0, vb0, hs0, vs0;
+
+    crystal_board board (
+        .clk(clk_sys), .rst_n(board_rst_n),
+        .flash_banks(flash_banks), .cpu_credit_max(6'd32), .cpu_turbo(cpu_turbo), .render_interval(16'd1100),
+        .in_p1p2(in_p1p2), .in_p3p4(in_p3p4), .in_system(in_system), .in_dsw(dsw),
+        .coin_counter(), .lamps(),
+        .rtc_load(rtc_load), .rtc_bcd(rtc[47:0]),
+        .mi_req(mi_req), .mi_addr(mi_addr), .mi_ack(mi_ack), .mi_data(mi_data),
+        .md_req(md_req), .md_we(md_we), .md_addr(md_addr), .md_be(md_be), .md_wdata(md_wdata), .md_ack(md_ack), .md_rdata(md_rdata),
+        .mv_req(mv_req), .mv_addr(mv_addr), .mv_ack(mv_ack), .mv_data(mv_data),
+        .ce_pix(ce_pix), .hcnt(hcnt), .vcnt(vcnt), .hblank(hb0), .vblank(vb0), .hsync(hs0), .vsync(vs0),
+        .display_dest(display_dest), .crt_blank(crt_blank),
+        .geo_hdisp(g_hdisp), .geo_vdisp(g_vdisp), .geo_vtot(g_vtot),
+        .dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_opcode(), .dbg_took_irq(), .dbg_illegal(dbg_illegal),
+        .dbg_sr(), .dbg_sp(), .dbg_er(), .dbg_regs(), .dbg_cpu_state(dbg_cpu_state), .dbg_io_ack(), .dbg_io_rdata(), .dbg_cpu_irq(), .dbg_irq_vector(),
+        .dbg_vblank_start(), .dbg_d_ack(), .dbg_d_we(), .dbg_d_addr(), .dbg_d_be(), .dbg_d_wdata(), .dbg_d_rdata()
     );
 
-    // ---------------------------------------------------------------- M0 test pattern
-    wire border = (hcnt == 10'd0) || (hcnt == 10'd319) || (vcnt == 10'd0) || (vcnt == 10'd239);
-    assign r = border ? 8'hff : {hcnt[7:3], 3'b000};
-    assign g = border ? 8'hff : {vcnt[7:3], 3'b000};
-    assign b = border ? 8'hff : {hcnt[8], vcnt[8], 6'b0} | (sw_test ? 8'h3f : 8'h00);
+    // RTC: load once when MiSTer's RTC becomes valid (rtc[64] toggles on every update)
+    reg rtc64_q, rtc_seen;
+    always @(posedge clk_sys) begin
+        rtc64_q <= rtc[64];
+        rtc_load <= 1'b0;
+        if (!board_rst_n) rtc_seen <= 1'b0;
+        else if (rtc[64] != rtc64_q && !rtc_seen) begin rtc_load <= 1'b1; rtc_seen <= 1'b1; end
+    end
+
+    // ------------------------------------------------------------------ memory system
+    localparam integer NC = 7;
+    wire [NC-1:0] c_req, c_we, c_wnext, c_rvalid, c_done;
+    wire [NC*24-1:0] c_addr;
+    wire [NC*6-1:0]  c_len;
+    wire [NC*16-1:0] c_wdata;
+    wire [NC*2-1:0]  c_wbe;
+    wire [15:0]      sd_rdata;
+    wire             sd_ready;
+
+    // client 0: scanout
+    wire        sc_req, sc_rvalid, sc_done;
+    wire [23:0] sc_addr;
+    wire  [5:0] sc_len;
+    // client 2: instruction cache
+    wire        ic_req;
+    wire [23:0] ic_addr;
+    wire  [5:0] ic_len;
+    // client 3: CPU/DMA data adapter
+    reg         da_inv;
+    reg         da_req, da_we;
+    reg  [23:0] da_addr;
+    reg   [5:0] da_len;
+    reg  [31:0] da_wdata;
+    reg   [3:0] da_be;
+    reg         da_word;          // which 16-bit word is presented for writing
+    // client 4: video engine reads
+    reg         vr_req;
+    reg  [23:0] vr_addr;
+
+    assign c_req   = {ls_req, 1'b0, vr_req, da_req, ic_req, 1'b0, sc_req};
+    assign c_we    = {1'b1, 1'b1, 1'b0, da_we, 1'b0, 1'b0, 1'b0};
+    assign c_addr  = {ls_addr, 24'd0, vr_addr, da_addr, ic_addr, 24'd0, sc_addr};
+    assign c_len   = {ls_len, 6'd1, 6'd1, da_len, ic_len, 6'd1, sc_len};
+    assign c_wdata = {ls_wdata, 16'd0, 16'd0, (da_word ? da_wdata[31:16] : da_wdata[15:0]), 16'd0, 16'd0, 16'd0};
+    assign c_wbe   = {2'b11, 2'b11, 2'b11, (da_word ? da_be[3:2] : da_be[1:0]), 2'b11, 2'b11, 2'b11};
+    assign ls_wnext = c_wnext[6];
+    assign ls_done  = c_done[6];
+
+    crystal_sdram #(.NC(NC)) sdram (
+        .clk(clk_sys), .init(!pll_locked),
+        .c_req(c_req), .c_we(c_we), .c_addr(c_addr), .c_len(c_len), .c_wdata(c_wdata), .c_wbe(c_wbe),
+        .c_wnext(c_wnext), .c_rvalid(c_rvalid), .rdata(sd_rdata), .c_done(c_done), .ready(sd_ready),
+        .dq_o(SDRAM_DQ_O), .dq_oe(SDRAM_DQ_OE), .dq_i(SDRAM_DQ_I), .sd_a(SDRAM_A), .sd_ba(SDRAM_BA), .sd_ncs(SDRAM_nCS),
+        .sd_nras(SDRAM_nRAS), .sd_ncas(SDRAM_nCAS), .sd_nwe(SDRAM_nWE), .sd_cke(SDRAM_CKE)
+    );
+    assign {SDRAM_DQMH, SDRAM_DQML} = SDRAM_A[12:11];
+`ifdef VERILATOR
+    assign SDRAM_CLK = ~clk_sys;
+`else
+    altddio_out #(
+        .extend_oe_disable("OFF"), .intended_device_family("Cyclone V"), .invert_output("OFF"),
+        .lpm_hint("UNUSED"), .lpm_type("altddio_out"), .oe_reg("UNREGISTERED"), .power_up_high("OFF"), .width(1)
+    ) sdramclk_ddr (
+        .datain_h(1'b0), .datain_l(1'b1), .outclock(clk_sys), .dataout(SDRAM_CLK),
+        .aclr(1'b0), .aset(1'b0), .oe(1'b1), .outclocken(1'b1), .sclr(1'b0), .sset(1'b0)
+    );
+`endif
+
+    // ---- flash store (DDR3)
+    wire        fr0_ack, fr1_ack;
+    wire [31:0] fr0_data;
+    wire [15:0] fr1_data;
+    crystal_flash_ddr flash (
+        .clk(clk_sys), .rst_n(pll_locked),
+        .r0_req(md_req && md_addr[27] && !md_we), .r0_addr(md_addr[26:0]), .r0_ack(fr0_ack), .r0_data(fr0_data),
+        .r1_req(mi_req && mi_addr[27]), .r1_addr(mi_addr[26:0]), .r1_ack(fr1_ack), .r1_data(fr1_data),
+        .w_req(lf_req), .w_addr(lf_addr), .w_data(lf_data), .w_be(lf_be), .w_ack(lf_ack),
+        .DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT), .DDRAM_ADDR(DDRAM_ADDR), .DDRAM_DOUT(DDRAM_DOUT),
+        .DDRAM_DOUT_READY(DDRAM_DOUT_READY), .DDRAM_RD(DDRAM_RD), .DDRAM_DIN(DDRAM_DIN), .DDRAM_BE(DDRAM_BE),
+        .DDRAM_WE(DDRAM_WE)
+    );
+
+    // ---- instruction fetch: SDRAM through the I-cache, flash through the flash store
+    wire        ic_ack;
+    wire [15:0] ic_data;
+    crystal_icache icache (
+        .clk(clk_sys), .rst_n(board_rst_n),
+        .req(mi_req && !mi_addr[27]), .addr(mi_addr[24:0]), .ack(ic_ack), .data(ic_data),
+        .inv(da_inv), .inv_addr(md_addr[24:0]),
+        .m_req(ic_req), .m_addr(ic_addr), .m_len(ic_len), .m_rvalid(c_rvalid[2]), .m_rdata(sd_rdata), .m_done(c_done[2])
+    );
+    assign mi_ack  = mi_addr[27] ? fr1_ack : ic_ack;
+    assign mi_data = mi_addr[27] ? fr1_data : ic_data;
+
+    // ---- data port adapter (32-bit <-> 16-bit SDRAM words)
+    reg         da_busy, da_ack_r;
+    reg  [31:0] da_rdata;
+    reg         da_rhalf;          // next read word goes to the high half
+    always @(posedge clk_sys) begin
+        da_ack_r <= 1'b0;
+        da_inv   <= 1'b0;
+        if (!board_rst_n) begin
+            da_busy <= 1'b0; da_req <= 1'b0;
+        end else if (!da_busy && md_req && !md_addr[27] && !da_ack_r) begin
+            logic lo, hi;
+            lo = md_be[1:0] != 2'b00;
+            hi = md_be[3:2] != 2'b00;
+            da_busy  <= 1'b1;
+            da_req   <= 1'b1;
+            da_we    <= md_we;
+            da_wdata <= md_wdata;
+            da_be    <= md_be;
+            da_addr  <= {md_addr[24:2], (!lo && hi)};
+            da_len   <= (lo && hi) ? 6'd2 : 6'd1;
+            da_word  <= !lo && hi;
+            da_rhalf <= !lo && hi;
+            da_rdata <= 32'd0;
+            da_inv   <= md_we;
+        end else if (da_busy) begin
+            if (c_wnext[3]) da_word <= 1'b1;
+            if (c_rvalid[3]) begin
+                if (da_rhalf) da_rdata[31:16] <= sd_rdata; else da_rdata[15:0] <= sd_rdata;
+                da_rhalf <= 1'b1;
+            end
+            if (c_done[3]) begin
+                da_req   <= 1'b0;
+                da_busy  <= 1'b0;
+                da_ack_r <= 1'b1;
+            end
+        end
+    end
+    // flash writes (outside the command dword, handled by the board) are ignored: ack immediately
+    assign md_ack   = md_addr[27] ? (md_we ? md_req : fr0_ack) : da_ack_r;
+    assign md_rdata = md_addr[27] ? fr0_data : da_rdata;
+
+    // ---- video engine reads (16-bit, M5 packet front end)
+    reg [15:0] vr_data;
+    reg        vr_ack;
+    always @(posedge clk_sys) begin
+        vr_ack <= 1'b0;
+        if (!board_rst_n) vr_req <= 1'b0;
+        else if (!vr_req && mv_req && !vr_ack) begin vr_req <= 1'b1; vr_addr <= mv_addr[24:1]; end
+        else if (vr_req) begin
+            if (c_rvalid[4]) vr_data <= sd_rdata;
+            if (c_done[4]) begin vr_req <= 1'b0; vr_ack <= 1'b1; end
+        end
+    end
+    assign mv_ack  = vr_ack;
+    assign mv_data = vr_data;
+
+    // ------------------------------------------------------------------ scanout
+    vr0_scanout scanout (
+        .clk(clk_sys), .rst_n(board_rst_n),
+        .ce_pix(ce_pix), .hcnt(hcnt), .vcnt(vcnt), .hblank(hb0), .vblank(vb0),
+        .hdisp(g_hdisp), .vdisp(g_vdisp), .vtotal(g_vtot),
+        .display_dest(display_dest), .blank(crt_blank || !board_rst_n),
+        .r(r), .g(g), .b(b),
+        .m_req(sc_req), .m_addr(sc_addr), .m_len(sc_len), .m_rvalid(c_rvalid[0]), .m_rdata(sd_rdata), .m_done(c_done[0]),
+        .underflows(dbg_underflows)
+    );
+    // scanout pixels are one pixel late: delay the timing signals to match
+    always @(posedge clk_sys) if (ce_pix) begin
+        hblank <= hb0; vblank <= vb0; hsync <= hs0; vsync <= vs0;
+    end
 
     assign audio_l = 16'sd0;
     assign audio_r = 16'sd0;
-    assign ioctl_wait = 1'b0;
-    assign rom_loading = ioctl_download;
-    assign cpu_running = 1'b0;
-
-    // ---------------------------------------------------------------- idle external memories
-    assign SDRAM_DQ   = 16'hzzzz;
-    assign SDRAM_A    = 13'd0;
-    assign SDRAM_DQML = 1'b1;
-    assign SDRAM_DQMH = 1'b1;
-    assign SDRAM_BA   = 2'd0;
-    assign SDRAM_nCS  = 1'b1;
-    assign SDRAM_nWE  = 1'b1;
-    assign SDRAM_nRAS = 1'b1;
-    assign SDRAM_nCAS = 1'b1;
-    assign SDRAM_CKE  = 1'b0;
-    assign SDRAM_CLK  = 1'b0;
-
-    assign DDRAM_BURSTCNT = 8'd1;
-    assign DDRAM_ADDR     = 29'd0;
-    assign DDRAM_RD       = 1'b0;
-    assign DDRAM_DIN      = 64'd0;
-    assign DDRAM_BE       = 8'hff;
-    assign DDRAM_WE       = 1'b0;
-
 endmodule

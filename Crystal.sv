@@ -56,7 +56,7 @@ assign VIDEO_ARX = (!ar) ? 12'd4 : (ar - 1'd1);
 assign VIDEO_ARY = (!ar) ? 12'd3 : 12'd0;
 
 `include "build_id.v"
-// Status bits: 0 Reset, 5 Service (test) switch, 10:9 Stereo mix, 12:11 Scandoubler Fx, 122:121 Aspect ratio.
+// Status bits: 0 Reset, 5 Service (test) switch, 6 CPU pacing off, 10:9 Stereo mix, 12:11 Scandoubler Fx, 122:121 Aspect ratio.
 localparam CONF_STR = {
 	"Crystal;;",
 	"-;",
@@ -64,6 +64,7 @@ localparam CONF_STR = {
 	"O[12:11],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%;",
 	"-;",
 	"O[5],Test switch (SW3),Off,On;",
+	"O[6],CPU speed,MAME (14.3 MIPS),Unlimited;",
 	"-;",
 	"O[10:9],Stereo mix,None,25%,50%,100%;",
 	"-;",
@@ -83,6 +84,7 @@ wire [127:0] status;
 wire  [31:0] joystick_0, joystick_1, joystick_2, joystick_3;
 
 wire        ioctl_download, ioctl_wr, ioctl_wait;
+wire [64:0] rtc;
 wire [15:0] ioctl_index, ioctl_dout;
 wire [26:0] ioctl_addr;
 
@@ -106,7 +108,8 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io
 	.ioctl_wr(ioctl_wr),
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_dout),
-	.ioctl_wait(ioctl_wait)
+	.ioctl_wait(ioctl_wait),
+	.RTC(rtc)
 );
 
 ///////////////////////   CLOCKS   ///////////////////////////////
@@ -121,6 +124,9 @@ wire        ce_pix, hblank, vblank, hsync, vsync;
 wire [7:0]  core_r, core_g, core_b;
 wire signed [15:0] snd_l, snd_r;
 wire        rom_loading, cpu_running;
+wire [15:0] sdram_dq_o;
+wire        sdram_dq_oe;
+assign SDRAM_DQ = sdram_dq_oe ? sdram_dq_o : 16'hzzzz;
 
 crystal_core core
 (
@@ -135,7 +141,9 @@ crystal_core core
 	.ioctl_wait(ioctl_wait),
 	.joy0(joystick_0), .joy1(joystick_1), .joy2(joystick_2), .joy3(joystick_3),
 	.sw_test(status[5]),
-	.SDRAM_DQ(SDRAM_DQ), .SDRAM_A(SDRAM_A), .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH), .SDRAM_BA(SDRAM_BA),
+	.cpu_turbo(status[6]),
+	.rtc(rtc),
+	.SDRAM_DQ_I(SDRAM_DQ), .SDRAM_DQ_O(sdram_dq_o), .SDRAM_DQ_OE(sdram_dq_oe), .SDRAM_A(SDRAM_A), .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH), .SDRAM_BA(SDRAM_BA),
 	.SDRAM_nCS(SDRAM_nCS), .SDRAM_nWE(SDRAM_nWE), .SDRAM_nRAS(SDRAM_nRAS), .SDRAM_nCAS(SDRAM_nCAS),
 	.SDRAM_CKE(SDRAM_CKE), .SDRAM_CLK(SDRAM_CLK),
 	.DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT), .DDRAM_ADDR(DDRAM_ADDR), .DDRAM_DOUT(DDRAM_DOUT),
@@ -144,7 +152,8 @@ crystal_core core
 	.ce_pix(ce_pix), .r(core_r), .g(core_g), .b(core_b), .hblank(hblank), .vblank(vblank), .hsync(hsync),
 	.vsync(vsync),
 	.audio_l(snd_l), .audio_r(snd_r),
-	.rom_loading(rom_loading), .cpu_running(cpu_running)
+	.rom_loading(rom_loading), .cpu_running(cpu_running),
+	.dbg_retire(), .dbg_pc(), .dbg_illegal(), .dbg_underflows(), .dbg_cpu_state()
 );
 assign DDRAM_CLK = clk_sys;
 
