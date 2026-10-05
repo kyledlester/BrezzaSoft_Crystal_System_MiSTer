@@ -40,6 +40,36 @@ enables or counters derived from it:
                                                                               ◄── vr0_sound (voice buffers)
 ```
 
+## Memory clients (rtl/crystal/crystal_core.sv)
+
+| SDRAM client (priority) | Block | Traffic |
+| --- | --- | --- |
+| 0 | `vr0_scanout` | 32-word bursts, one display line ahead (line buffer 2 x 1024 x 16) |
+| 1 | `vr0_sound` | one word per active voice per 44.19 kHz sample |
+| 2 | `crystal_icache` (8 KiB, banks 0/3) | 8-word line fills, uncached single words elsewhere |
+| 3 | `crystal_dcache` (8 KiB write-through, banks 0/3) + 8-entry posted-write FIFO | line fills, posted/synchronous writes |
+| 4 | `vr0_render` texture reads | 32-word packets, 32-word palette bursts, 16-word cache lines |
+| 5 | `vr0_render` frame reads | 32-word segments (alpha blending only) |
+| 6 | `vr0_render` frame writes | 32-word masked segment write-backs |
+| 7 | `crystal_loader` | BIOS words, RAM clear bursts (reset only) |
+
+Flash (DDR3) has two read ports (CPU data, instruction fetch), each with a 64-byte line buffer, and the loader's
+write port. Coherency rules: only the CPU/DMA port writes banks 0/3 (cached); CPU/DMA writes to texture RAM
+invalidate the renderer's texture caches (snoop); writes to texture/frame RAM are never posted, so a display list
+or sample is in SDRAM before the CPU can start the engine through an I/O register; I-cache fills wait for posted
+writes.
+
+## Verification status
+
+| Layer | Bench | Result |
+| --- | --- | --- |
+| CPU | `scripts/sim/cpu_difftest.sh` | 10 M random instructions identical |
+| Board (CPU, decode, devices) | `scripts/sim/board_lockstep.sh` | 120 M instructions / 740 frames identical |
+| SDRAM controller | `scripts/sim/sdram_stress.sh` | 0 timing violations, data checked |
+| Renderer | `scripts/sim/render_difftest.sh` | 886 M pixels / 177 K packets identical (attract + gameplay) |
+| Audio | `scripts/sim/audio_difftest.sh` | 4.78 M samples identical |
+| Full core | `scripts/sim/core_sim.sh` | real download, DDR3 image check, video capture |
+
 ## Repository layout
 
 | Path | Content |

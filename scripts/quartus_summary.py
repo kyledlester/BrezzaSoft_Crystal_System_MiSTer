@@ -15,15 +15,20 @@ REV = "Crystal"
 
 def read(p):
     try:
-        return p.read_text(errors="replace")
+        raw = p.read_bytes()
     except OSError:
         return ""
+    if raw[:2] in (bytes([0xff, 0xfe]), bytes([0xfe, 0xff])):
+        return raw.decode("utf-16", errors="replace")
+    return raw.decode("utf-8", errors="replace")
 
 
 def main():
     ok = True
     flow = read(ROOT / "build" / "quartus_flow.log")
-    errors = [l for l in flow.splitlines() if l.startswith("Error")]
+    errors = [l.strip() for l in flow.splitlines() if l.strip().startswith("Error")]
+    if "was not successful" in flow or "ended unexpectedly" in flow:
+        ok = False
     if errors:
         ok = False
         print("ERRORS:")
@@ -54,7 +59,11 @@ def main():
         print("TIMING: negative slack in", len(worst), "analyses")
 
     rbf = OUT / f"{REV}.rbf"
-    if rbf.exists():
+    fitp = OUT / f"{REV}.fit.summary"
+    if rbf.exists() and fitp.exists() and rbf.stat().st_mtime < fitp.stat().st_mtime:
+        ok = False
+        print("RBF: stale (older than the fitter summary: assembler did not run)")
+    elif rbf.exists():
         print(f"RBF: {rbf} ({rbf.stat().st_size} bytes)")
     else:
         ok = False
