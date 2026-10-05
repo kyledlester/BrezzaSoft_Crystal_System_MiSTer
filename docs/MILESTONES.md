@@ -56,14 +56,25 @@ checked, 0.737 words/clock under a random row-miss mix. Full-core simulation: 0 
 scaling, alpha blending src=0x02 dst=0x21/0x22, fills, palettes, flips). 4/16 bpp, rotation and clamp are implemented
 but not exercised by the game stream (K11).
 
-## M17 — CRTC / scanout — IN PROGRESS
+## M17 / M18 — CRTC, scanout, full-core integration — DONE in simulation
 
-Raster from the programmed CRTC (455 x 262, 320 x 240, 7.159 MHz), line-buffered scanout; full-core simulation shows
-the BIOS boot picture through SDRAM + scanout. Waiting for the long simulation to reach attract.
+Raster from the programmed CRTC (455 x 262, 320 x 240, 7.159 MHz), line-buffered scanout. Full-core simulation
+(`scripts/sim/core_sim.sh`: crystal_core + SDRAM chip model + DDR3 model, real hps_io download of the MRA stream):
+download + flash-store check pass, BIOS boot, BrezzaSoft logo, attract ("Insert Coin", story text) and, with
+coin/start inputs (`--input 900:coin1:on ...`), the "How to Play" and "Select Warrior" screens with sprites, scaling
+and alpha blending — rendered by the RTL renderer into SDRAM and read back by the scanout. 1950 frames, 0 scanout
+underflows, 0 SDRAM protocol violations.
+
+## M19 — Controls — DONE in simulation
+
+Coin 1 / Start 1 / Button 1 from the MiSTer joystick bits reach the game in the full-core simulation (credit
+accepted, game started, warrior selection). DIP switches and Test/Service via OSD: see README.
 
 ## M20/M21 — Audio — DONE for crysking's feature set
 
 `scripts/sim/audio_difftest.sh`: **4,783,055 samples (1,711,365 non-zero, gameplay) identical** to the reference,
 Status register identical. Envelope/loop/16-bit/8-bit implemented per MAME, not exercised by the game (K5).
+Every CPU read of the sound registers is compared too. Full core: `tb_core --wav` captures audio_l/audio_r at the
+44.19 kHz output rate; silent during attract, non-zero from the coin onwards (peak 10,775) in the gameplay run.
 
-## M18, M19, M22–M28 — TODO
+## M22–M28 — IN PROGRESS (timing closure for the first hardware build)

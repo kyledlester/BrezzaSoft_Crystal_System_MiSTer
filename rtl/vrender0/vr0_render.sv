@@ -619,22 +619,23 @@ module vr0_render (
                 end
                 p7_v <= p6_v; p7_idx <= p6_idx; p7_blend <= p6_blend; p7_col <= p6_src;
                 for (int ch = 0; ch < 3; ch++) begin p7_pa[ch] <= p6_pa[ch]; p7_pb[ch] <= p6_pb[ch]; end
-                p6_v <= 1'b0;
+                // ---- P5 -> P6: shade + destination read. The data registers load every clock (no stall enable,
+                //      so the shade multipliers need no clock enable); p6_v says whether they hold a pixel.
+                p6_v     <= 1'b0;
+                p6_idx   <= p5_fb[4:0];
+                p6_blend <= q_blend_any;
+                p6_src   <= (q_tex && q_shade) ? do_shade(p5_col, q_shadec) : p5_col;
+                p6_dst   <= seg[p5_fb[4:0]];
                 if (!stall) begin
-                    // ---- P5 -> P6: destination read
                     if (p5_v && !p5_skip) begin
-                        p6_v     <= 1'b1;
-                        p6_idx   <= p5_fb[4:0];
-                        p6_blend <= q_blend_any;
-                        p6_src   <= p5_col;
-                        p6_dst   <= seg[p5_fb[4:0]];
+                        p6_v <= 1'b1;
                         stat_pixels <= stat_pixels + 32'd1;
                     end
-                    // ---- P4 -> P5: transparency + shade
+                    // ---- P4 -> P5: transparency (on the unshaded texel colour, shade is applied in P5 -> P6)
                     p5_v <= p4_v; p5_x <= p4_x; p5_y <= p4_y; p5_fb <= p4_fbword;
                     if (q_tex) begin
                         p5_skip <= p4_skip || (p4_col == q_transc);
-                        p5_col  <= q_shade ? do_shade(p4_col, q_shadec) : p4_col;
+                        p5_col  <= p4_col;
                     end else begin
                         p5_skip <= p4_skip;
                         p5_col  <= q_fillc;

@@ -71,7 +71,7 @@ module vr0_sound #(
         return t[v];
     endfunction
 
-    typedef enum logic [3:0] { E_IDLE, E_DIV, E_CH, E_RD, E_FETCH, E_FWAIT, E_ADV, E_ENV, E_MIX, E_WB, E_OUT } est_t;
+    typedef enum logic [3:0] { E_IDLE, E_DIV, E_CH, E_RD, E_FETCH, E_FWAIT, E_ADV, E_ENV, E_MIX, E_MIX2, E_WB, E_OUT } est_t;
     est_t st;
 
     reg  [10:0] tick;
@@ -94,6 +94,7 @@ module vr0_sound #(
     reg   [1:0] lvl;
     reg         env_ph;               // envelope level: 0 = rate product, 1 = add / target compare
     reg signed [31:0] rate_q;
+    reg signed [31:0] mix_l, mix_r;   // volume products (E_MIX -> E_MIX2)
     reg         ended;
 
     wire [7:0]  modes  = w[5][14:8];
@@ -273,8 +274,13 @@ module vr0_sound #(
                 end
             end
             E_MIX: begin
-                acc_l <= acc_l + ((smp * $signed({25'd0, lvol})) >>> 8);
-                acc_r <= acc_r + ((smp * $signed({25'd0, rvol})) >>> 8);
+                mix_l <= (smp * $signed({25'd0, lvol})) >>> 8;
+                mix_r <= (smp * $signed({25'd0, rvol})) >>> 8;
+                st <= E_MIX2;
+            end
+            E_MIX2: begin
+                acc_l <= acc_l + mix_l;
+                acc_r <= acc_r + mix_r;
                 st <= E_WB;
             end
             E_WB: begin

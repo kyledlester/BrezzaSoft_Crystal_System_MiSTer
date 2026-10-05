@@ -12,14 +12,14 @@ modules, HDMI/analog output, input mapping, audio level).
 | `mra/The Crystal of Kings.mra` | `/media/fat/_Arcade/` |
 | `crysking.zip`, `crysbios.zip` (your MAME sets) | `/media/fat/games/mame/` |
 
-## Expected sequence (as MAME and the core simulation)
+## Expected sequence (full-core simulation; times include the ~1 s ROM download)
 
 | Time after load | Expected picture | Sound |
 | --- | --- | --- |
 | 0-1 s | black, then thin vertical blue/green lines (BIOS self test, the board's "vertical line" boot screen) | none |
-| ~8 s | BrezzaSoft logo fading in on light grey | none |
-| ~10 s | "Insert Coin" top left/right, story text "It was an age known as ..." | none (attract is silent in MAME too) |
-| ~20-60 s | red castle scenes, "Crystal of Kings" title art, blue night scene with armies | none |
+| ~11-13 s | BrezzaSoft logo fading in on light grey | none |
+| ~15-20 s | "Insert Coin" top left/right, story text "It was an age known as ..." | none (attract is silent in MAME too) |
+| ~25-60 s | red castle scenes, "Crystal of Kings" title art, blue night scene with armies | none |
 
 Insert coin (Select) → start (Start) → "How to Play" screens → "SELECT WARRIOR" (4 characters) → gameplay with
 music and sound effects.
