@@ -139,6 +139,7 @@ void Board::step_insn()
     cpu.irq_line = int_line;
     cpu.step();
     st.op[cpu.last_op]++;
+    if (cpu.last_took_irq) { st.irqs++; st.irq_vectors[cpu.last_irq_vector]++; }
 }
 
 void Board::run_ticks(uint64_t ticks)

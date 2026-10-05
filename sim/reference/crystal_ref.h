@@ -197,6 +197,8 @@ public:
         std::map<uint32_t, uint64_t> blend_modes;   // (src_blend<<8)|dst_blend
         uint32_t snd_modes_seen = 0, snd_ctrl_seen = 0, snd_max_chan_seen = 0, snd_clk_seen = 0;
         uint64_t snd_voice_samples = 0;
+        uint64_t irqs = 0;
+        std::map<uint8_t, uint64_t> irq_vectors;
     } st;
     bool in_fetch = false;
     static int region(uint32_t a);

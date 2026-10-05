@@ -73,7 +73,7 @@ module crystal_core (
         .clk(clk_sys), .rst_n(rst_n),
         .htotal(10'd455), .hdisp(10'd320), .hs_start(10'd336), .hs_end(10'd370),
         .vtotal(10'd262), .vdisp(10'd240), .vs_start(10'd244), .vs_end(10'd247),
-        .div(4'd12),
+        .div(6'd12),
         .ce_pix(ce_pix), .hcnt(hcnt), .vcnt(vcnt),
         .hblank(hblank), .vblank(vblank), .hsync(hsync), .vsync(vsync)
     );

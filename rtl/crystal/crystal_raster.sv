@@ -15,7 +15,7 @@ module crystal_raster (
     input  wire [9:0] vdisp,      // visible lines
     input  wire [9:0] vs_start,
     input  wire [9:0] vs_end,
-    input  wire [3:0] div,        // clk_sys cycles per pixel
+    input  wire [5:0] div,        // clk_sys cycles per pixel
     output reg        ce_pix,
     output reg  [9:0] hcnt,
     output reg  [9:0] vcnt,
@@ -24,7 +24,7 @@ module crystal_raster (
     output wire       hsync,
     output wire       vsync
 );
-    reg [3:0] dcnt;
+    reg [5:0] dcnt;
     reg [9:0] ht, hd, hss, hse, vt, vd, vss, vse;
 
     always @(posedge clk) begin
@@ -37,11 +37,11 @@ module crystal_raster (
             vt <= vtotal; vd <= vdisp; vss <= vs_start; vse <= vs_end;
         end else begin
             ce_pix <= 1'b0;
-            if (dcnt >= div - 4'd1) begin
+            if (dcnt >= div - 6'd1) begin
                 dcnt   <= '0;
                 ce_pix <= 1'b1;
             end else begin
-                dcnt <= dcnt + 4'd1;
+                dcnt <= dcnt + 6'd1;
             end
             if (ce_pix) begin
                 if (hcnt >= ht - 10'd1) begin

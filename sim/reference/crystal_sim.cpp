@@ -238,6 +238,8 @@ int main(int argc, char **argv)
                st.texel_reads / fr, st.tile_reads / fr);
         printf("  max per frame: written %llu considered %llu\n", (unsigned long long)st.max_frame_px, (unsigned long long)st.max_frame_considered);
         for (auto &e : st.blend_modes) printf("  blend src=%02x dst=%02x quads=%llu\n", e.first >> 8, e.first & 0xff, (unsigned long long)e.second);
+        printf("== interrupts taken: %llu\n", (unsigned long long)st.irqs);
+        for (auto &e : st.irq_vectors) printf("  vector %02x: %llu\n", e.first, (unsigned long long)e.second);
         printf("== sound: modes_seen_mask=%08x ctrl_or=%04x max_chan=%u clk_num=%u voice_samples/frame=%.0f\n", st.snd_modes_seen,
                st.snd_ctrl_seen, st.snd_max_chan_seen, st.snd_clk_seen, st.snd_voice_samples / fr);
     }

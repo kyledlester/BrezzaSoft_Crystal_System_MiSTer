@@ -11,7 +11,7 @@ cd "$OUT"
 verilator --cc --exe -O3 --x-assign fast --x-initial fast -Wno-fatal -Wno-WIDTH -Wno-CASEINCOMPLETE \
   -Wno-UNOPTFLAT -Wno-LATCH -Wno-TIMESCALEMOD --top-module "$TOP" -CFLAGS "-std=c++17" --Mdir obj "$@" $SV $CPP \
   > verilate.log 2>&1 || { grep -E "%Error" verilate.log | head -30; exit 1; }
-make -C obj -f "V$TOP.mk" -j 8 OPT_SLOW="-O1 -pipe" OPT_GLOBAL="-O1 -pipe" OPT_FAST="-O2 -pipe" CXX="g++ -pipe" \
+make -C obj -f "V$TOP.mk" -j 8 VM_PARALLEL_BUILDS=0 OPT_SLOW="-O1 -pipe" OPT_GLOBAL="-O1 -pipe" OPT_FAST="-O2 -pipe" CXX="g++ -pipe" \
   "V${TOP}__ALL.a" $(for f in $CPP; do b=$(basename "$f" .cpp); echo "$b.o"; done) verilated.o verilated_threads.o \
   > make.log 2>&1 || { grep -E "error|Error" make.log | head -30; exit 1; }
 cd obj
