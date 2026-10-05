@@ -47,6 +47,8 @@ struct Hooks {
     std::function<void(int frame)> vblank;
     std::function<void(int which, uint32_t src, uint32_t dst, uint32_t cnt, uint32_t ctrl)> dma_start;
     std::function<void(int16_t l, int16_t r)> sample;
+    std::function<void(uint32_t addr, int size, uint32_t data)> ram_write;          // CPU/DMA writes to RAM regions
+    std::function<void(uint32_t ptr)> before_packet;                                 // just before process_packet
 };
 
 class Board {

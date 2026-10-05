@@ -44,11 +44,28 @@ module crystal_board (
     input  wire        md_ack,
     input  wire [31:0] md_rdata,
 
-    // memory port V: video engine (16-bit reads, M5 packet front end)
-    output wire        mv_req,
-    output wire [27:0] mv_addr,
-    input  wire        mv_ack,
-    input  wire [15:0] mv_data,
+    // video engine SDRAM clients (word addresses, crystal_sdram client protocol)
+    output wire        vt_req,
+    output wire [23:0] vt_addr,
+    output wire  [5:0] vt_len,
+    input  wire        vt_rvalid,
+    input  wire        vt_done,
+    output wire        vf_req,
+    output wire [23:0] vf_addr,
+    output wire  [5:0] vf_len,
+    input  wire        vf_rvalid,
+    input  wire        vf_done,
+    input  wire [15:0] v_rdata,
+    output wire        vw_req,
+    output wire [23:0] vw_addr,
+    output wire  [5:0] vw_len,
+    output wire [15:0] vw_wdata,
+    output wire  [1:0] vw_wbe,
+    input  wire        vw_wnext,
+    input  wire        vw_done,
+    input  wire        tex_snoop,        // CPU/DMA write to texture RAM (SDRAM word address)
+    input  wire [23:0] tex_snoop_addr,
+    output wire [31:0] dbg_render_pixels,
 
     // video timing / scanout control
     output wire        ce_pix,
@@ -375,25 +392,16 @@ module crystal_board (
         .draw_dest(draw_dest), .display_dest(display_dest), .dither_mode(), .min_interval(render_interval)
     );
 
-    // M5 packet front end: reads word 0 and reports flips (drawing arrives with vr0_render, M13)
-    reg  pf_busy, pf_req;
-    reg  [1:0] pf_flip;
-    reg  pf_done;
-    assign mv_req  = pf_req;
-    assign mv_addr = 28'h0800000 + {10'd0, pkt_addr, 1'b0};   // texture RAM = SDRAM bank 1, word address * 2
-    assign pkt_done = pf_done;
-    assign pkt_flip = pf_flip;
-    always @(posedge clk) begin
-        pf_done <= 1'b0;
-        if (!rst_n) begin pf_busy <= 1'b0; pf_req <= 1'b0; end
-        else if (pkt_start) begin pf_busy <= 1'b1; pf_req <= 1'b1; end
-        else if (pf_req && mv_ack) begin
-            pf_req  <= 1'b0;
-            pf_busy <= 1'b0;
-            pf_done <= 1'b1;
-            pf_flip <= {mv_data[7], mv_data[0]};
-        end
-    end
+    vr0_render render (
+        .clk(clk), .rst_n(rst_n),
+        .start(pkt_start), .pkt_addr(pkt_addr), .draw_dest(draw_dest), .done(pkt_done), .flip(pkt_flip),
+        .t_req(vt_req), .t_addr(vt_addr), .t_len(vt_len), .t_rvalid(vt_rvalid), .t_rdata(v_rdata), .t_done(vt_done),
+        .f_req(vf_req), .f_addr(vf_addr), .f_len(vf_len), .f_rvalid(vf_rvalid), .f_rdata(v_rdata), .f_done(vf_done),
+        .w_req(vw_req), .w_addr(vw_addr), .w_len(vw_len), .w_wdata(vw_wdata), .w_wbe(vw_wbe), .w_wnext(vw_wnext),
+        .w_done(vw_done),
+        .snoop(tex_snoop), .snoop_addr(tex_snoop_addr),
+        .stat_pixels(dbg_render_pixels), .stat_busy_cycles(), .dbg(), .dbg2(), .dbg3()
+    );
 
     // ------------------------------------------------------------------ sound engine registers
     vr0_sound_regs sregs (

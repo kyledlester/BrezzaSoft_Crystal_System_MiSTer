@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kyle Lester. SPDX-License-Identifier: GPL-3.0-or-later
 //
 // docs/ARCHITECTURE.md. SDRAM clients (priority order): 0 scanout, 1 sound, 2 instruction cache, 3 CPU/DMA data,
-// 4 video engine reads, 5 video engine writes, 6 loader.
+// 4 renderer texture reads, 5 renderer frame reads, 6 renderer frame writes, 7 loader.
 module crystal_core (
     input  wire        clk_sys,
     input  wire        pll_locked,
@@ -59,7 +59,8 @@ module crystal_core (
     output wire [31:0] dbg_pc,
     output wire        dbg_illegal,
     output wire [15:0] dbg_underflows,
-    output wire  [4:0] dbg_cpu_state
+    output wire  [4:0] dbg_cpu_state,
+    output wire [31:0] dbg_render_pixels
 );
     // ------------------------------------------------------------------ loader and reset
     wire        ld_busy, ld_loaded;
@@ -117,9 +118,14 @@ module crystal_core (
     // ------------------------------------------------------------------ board
     reg         rtc_load;
     wire  [9:0] g_hdisp, g_vdisp, g_vtot;
-    wire        mi_req, mi_ack, md_req, md_we, md_ack, mv_req, mv_ack;
-    wire [27:0] mi_addr, md_addr, mv_addr;
-    wire [15:0] mi_data, mv_data;
+    wire        mi_req, mi_ack, md_req, md_we, md_ack;
+    wire [27:0] mi_addr, md_addr;
+    wire [15:0] mi_data;
+    wire        vt_req, vf_req, vw_req;
+    wire [23:0] vt_addr, vf_addr, vw_addr;
+    wire  [5:0] vt_len, vf_len, vw_len;
+    wire [15:0] vw_wdata;
+    wire  [1:0] vw_wbe;
     wire  [3:0] md_be;
     wire [31:0] md_wdata, md_rdata;
     wire [22:0] display_dest;
@@ -135,7 +141,13 @@ module crystal_core (
         .rtc_load(rtc_load), .rtc_bcd(rtc[47:0]),
         .mi_req(mi_req), .mi_addr(mi_addr), .mi_ack(mi_ack), .mi_data(mi_data),
         .md_req(md_req), .md_we(md_we), .md_addr(md_addr), .md_be(md_be), .md_wdata(md_wdata), .md_ack(md_ack), .md_rdata(md_rdata),
-        .mv_req(mv_req), .mv_addr(mv_addr), .mv_ack(mv_ack), .mv_data(mv_data),
+        .vt_req(vt_req), .vt_addr(vt_addr), .vt_len(vt_len), .vt_rvalid(c_rvalid[4]), .vt_done(c_done[4]),
+        .vf_req(vf_req), .vf_addr(vf_addr), .vf_len(vf_len), .vf_rvalid(c_rvalid[5]), .vf_done(c_done[5]),
+        .v_rdata(sd_rdata),
+        .vw_req(vw_req), .vw_addr(vw_addr), .vw_len(vw_len), .vw_wdata(vw_wdata), .vw_wbe(vw_wbe),
+        .vw_wnext(c_wnext[6]), .vw_done(c_done[6]),
+        .tex_snoop(da_inv && md_addr[24:23] == 2'b01), .tex_snoop_addr(md_addr[24:1]),
+        .dbg_render_pixels(dbg_render_pixels),
         .ce_pix(ce_pix), .hcnt(hcnt), .vcnt(vcnt), .hblank(hb0), .vblank(vb0), .hsync(hs0), .vsync(vs0),
         .display_dest(display_dest), .crt_blank(crt_blank),
         .geo_hdisp(g_hdisp), .geo_vdisp(g_vdisp), .geo_vtot(g_vtot),
@@ -154,7 +166,7 @@ module crystal_core (
     end
 
     // ------------------------------------------------------------------ memory system
-    localparam integer NC = 7;
+    localparam integer NC = 8;
     wire [NC-1:0] c_req, c_we, c_wnext, c_rvalid, c_done;
     wire [NC*24-1:0] c_addr;
     wire [NC*6-1:0]  c_len;
@@ -179,18 +191,15 @@ module crystal_core (
     reg  [31:0] da_wdata;
     reg   [3:0] da_be;
     reg         da_word;          // which 16-bit word is presented for writing
-    // client 4: video engine reads
-    reg         vr_req;
-    reg  [23:0] vr_addr;
 
-    assign c_req   = {ls_req, 1'b0, vr_req, da_req, ic_req, 1'b0, sc_req};
-    assign c_we    = {1'b1, 1'b1, 1'b0, da_we, 1'b0, 1'b0, 1'b0};
-    assign c_addr  = {ls_addr, 24'd0, vr_addr, da_addr, ic_addr, 24'd0, sc_addr};
-    assign c_len   = {ls_len, 6'd1, 6'd1, da_len, ic_len, 6'd1, sc_len};
-    assign c_wdata = {ls_wdata, 16'd0, 16'd0, (da_word ? da_wdata[31:16] : da_wdata[15:0]), 16'd0, 16'd0, 16'd0};
-    assign c_wbe   = {2'b11, 2'b11, 2'b11, (da_word ? da_be[3:2] : da_be[1:0]), 2'b11, 2'b11, 2'b11};
-    assign ls_wnext = c_wnext[6];
-    assign ls_done  = c_done[6];
+    assign c_req   = {ls_req, vw_req, vf_req, vt_req, da_req, ic_req, 1'b0, sc_req};
+    assign c_we    = {1'b1, 1'b1, 1'b0, 1'b0, da_we, 1'b0, 1'b0, 1'b0};
+    assign c_addr  = {ls_addr, vw_addr, vf_addr, vt_addr, da_addr, ic_addr, 24'd0, sc_addr};
+    assign c_len   = {ls_len, vw_len, vf_len, vt_len, da_len, ic_len, 6'd1, sc_len};
+    assign c_wdata = {ls_wdata, vw_wdata, 16'd0, 16'd0, (da_word ? da_wdata[31:16] : da_wdata[15:0]), 16'd0, 16'd0, 16'd0};
+    assign c_wbe   = {2'b11, vw_wbe, 2'b11, 2'b11, (da_word ? da_be[3:2] : da_be[1:0]), 2'b11, 2'b11, 2'b11};
+    assign ls_wnext = c_wnext[7];
+    assign ls_done  = c_done[7];
 
     crystal_sdram #(.NC(NC)) sdram (
         .clk(clk_sys), .init(!pll_locked),
@@ -278,21 +287,6 @@ module crystal_core (
     // flash writes (outside the command dword, handled by the board) are ignored: ack immediately
     assign md_ack   = md_addr[27] ? (md_we ? md_req : fr0_ack) : da_ack_r;
     assign md_rdata = md_addr[27] ? fr0_data : da_rdata;
-
-    // ---- video engine reads (16-bit, M5 packet front end)
-    reg [15:0] vr_data;
-    reg        vr_ack;
-    always @(posedge clk_sys) begin
-        vr_ack <= 1'b0;
-        if (!board_rst_n) vr_req <= 1'b0;
-        else if (!vr_req && mv_req && !vr_ack) begin vr_req <= 1'b1; vr_addr <= mv_addr[24:1]; end
-        else if (vr_req) begin
-            if (c_rvalid[4]) vr_data <= sd_rdata;
-            if (c_done[4]) begin vr_req <= 1'b0; vr_ack <= 1'b1; end
-        end
-    end
-    assign mv_ack  = vr_ack;
-    assign mv_data = vr_data;
 
     // ------------------------------------------------------------------ scanout
     vr0_scanout scanout (

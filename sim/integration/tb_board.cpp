@@ -184,13 +184,30 @@ int main(int argc, char **argv)
     // the reset vector read is a data access in the RTL; consume it below
 
     // ---------------- memory port servers
-    struct Port { int wait = -1; } pi, pd, pv;
+    struct Port { int wait = -1; } pi, pd;
+    // renderer SDRAM clients (crystal_sdram protocol: rvalid per word, done with the last read word, writes
+    // advance on wnext and complete with done one clock after the last word)
+    struct CPort { bool active = false; uint32_t addr = 0; int left = 0, wait = 0; bool done_pending = false; } ct, cf, cw;
+    auto sd_word = [&](uint32_t w) -> uint16_t { uint32_t b = (w << 1) & 0x1ffffff; return uint16_t(sdram[b] | (sdram[b + 1] << 8)); };
     uint64_t cycles = 0, insns = 0, frames = 0, irqs = 0;
     bool reset_read_seen = false;
     std::vector<Acc> pending;        // RTL accesses since the last retire
     while (!mismatch && insns < max_insns && frames < uint64_t(max_frames)) {
         // responses
-        top->mi_ack = 0; top->md_ack = 0; top->mv_ack = 0;
+        top->mi_ack = 0; top->md_ack = 0;
+        top->vt_rvalid = 0; top->vt_done = 0; top->vf_rvalid = 0; top->vf_done = 0; top->vw_wnext = 0;
+        top->vw_done = cw.done_pending; cw.done_pending = false;
+        top->tex_snoop = 0;
+        {
+            bool tr = false, fr = false;
+            if (top->vt_req && !ct.active) { ct = {true, top->vt_addr, top->vt_len, int(1 + rnd() % 4), false}; }
+            if (ct.active) { if (ct.wait > 0) ct.wait--; else { top->v_rdata = sd_word(ct.addr++); top->vt_rvalid = 1; tr = true; if (--ct.left == 0) { top->vt_done = 1; ct.active = false; } } }
+            if (top->vf_req && !cf.active) { cf = {true, top->vf_addr, top->vf_len, int(1 + rnd() % 4), false}; }
+            if (cf.active && !tr) { if (cf.wait > 0) cf.wait--; else { top->v_rdata = sd_word(cf.addr++); top->vf_rvalid = 1; if (--cf.left == 0) { top->vf_done = 1; cf.active = false; } } }
+            (void)fr;
+            if (top->vw_req && !cw.active && !top->vw_done) { cw = {true, top->vw_addr, top->vw_len, int(1 + rnd() % 4), false}; }
+            if (cw.active) { if (cw.wait > 0) cw.wait--; else top->vw_wnext = 1; }
+        }
         if (top->mi_req) { if (pi.wait < 0) pi.wait = rnd() % (max_lat + 1); if (pi.wait == 0) { top->mi_ack = 1; top->mi_data = uint16_t(phys_rd(top->mi_addr, 2)); } }
         if (top->md_req) {
             if (pd.wait < 0) pd.wait = rnd() % (max_lat + 1);
@@ -198,6 +215,7 @@ int main(int argc, char **argv)
                 top->md_ack = 1;
                 uint32_t p = top->md_addr & ~3u;
                 if (top->md_we) {
+                    if ((p & 0x1800000) == 0x0800000) { top->tex_snoop = 1; top->tex_snoop_addr = (p >> 1) & 0xffffff; }
                     for (int b = 0; b < 4; b++) if (top->md_be & (1 << b)) {
                         uint32_t a = p + b;
                         if (!(a & 0x8000000)) sdram[a & 0x1ffffff] = uint8_t(top->md_wdata >> (8 * b));
@@ -205,12 +223,19 @@ int main(int argc, char **argv)
                 } else top->md_rdata = phys_rd(p, 4);
             }
         }
-        if (top->mv_req) { if (pv.wait < 0) pv.wait = rnd() % (max_lat + 1); if (pv.wait == 0) { top->mv_ack = 1; top->mv_data = uint16_t(phys_rd(top->mv_addr, 2)); } }
+        top->eval();
+        if (top->vw_wnext) {
+            uint32_t b = (cw.addr << 1) & 0x1ffffff;
+            if (top->vw_wbe & 1) sdram[b] = uint8_t(top->vw_wdata);
+            if (top->vw_wbe & 2) sdram[b + 1] = uint8_t(top->vw_wdata >> 8);
+            cw.addr++;
+            if (--cw.left == 0) { cw.active = false; cw.done_pending = true; }
+        }
         top->clk = 1;
         top->eval();
         if (pi.wait >= 0) { if (top->mi_ack) pi.wait = -1; else pi.wait--; }
         if (pd.wait >= 0) { if (top->md_ack) pd.wait = -1; else pd.wait--; }
-        if (pv.wait >= 0) { if (top->mv_ack) pv.wait = -1; else pv.wait--; }
+
         top->clk = 0;
         top->eval();
         cycles++;

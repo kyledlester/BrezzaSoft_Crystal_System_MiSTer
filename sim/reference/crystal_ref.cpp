@@ -592,6 +592,7 @@ void Board::pipeline_tick()
     if (!render_start) return;
     if (flip_sync) return;
     if ((queue_rear & 0x7ff) == (queue_front & 0x7ff)) return;
+    if (hooks.before_packet) hooks.before_packet(uint32_t(queue_rear) * 32);
     int do_flip = process_packet(uint32_t(queue_rear) * 32);
     queue_rear = (queue_rear + 1) & 0x7ff;
     if (do_flip & 1) flip_sync = true;
@@ -1162,6 +1163,8 @@ void Board::write(uint32_t addr, int size, uint32_t data)
         }
     }
     if (addr < 0x00020000) return;  // ROM, nopw
+    if (hooks.ram_write && ((addr >= 0x03800000 && addr < 0x04800000) || (addr >= 0x02000000 && addr < 0x03000000)))
+        hooks.ram_write(addr, size, data);
     if (addr >= 0x02000000 && addr < 0x03000000) { ram_wr(workram, addr & 0x7fffff); return; }
     if (addr >= 0x01400000 && addr < 0x01410000) { ram_wr(nvram, addr & 0xffff); return; }
     if (addr >= 0x03800000 && addr < 0x04000000) { ram_wr(texram, addr & 0x7fffff); return; }

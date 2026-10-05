@@ -153,7 +153,7 @@ crystal_core core
 	.vsync(vsync),
 	.audio_l(snd_l), .audio_r(snd_r),
 	.rom_loading(rom_loading), .cpu_running(cpu_running),
-	.dbg_retire(), .dbg_pc(), .dbg_illegal(), .dbg_underflows(), .dbg_cpu_state()
+	.dbg_retire(), .dbg_pc(), .dbg_illegal(), .dbg_underflows(), .dbg_cpu_state(), .dbg_render_pixels()
 );
 assign DDRAM_CLK = clk_sys;
 
