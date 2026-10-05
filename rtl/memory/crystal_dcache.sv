@@ -42,6 +42,8 @@ module crystal_dcache (
     (* ramstyle = "M10K" *) reg [13:0] tram [0:511];    // {valid, addr[24:23] bank, addr[22:13]} index addr[12:4]
     reg  [31:0] d_q;
     reg  [13:0] t_q;
+    // RAM write ports are driven combinationally by the state machine (below), so a write takes effect on the
+    // same clock edge the FSM decides it and the next lookup can never read stale tags/data.
     reg         d_we;
     reg  [10:0] d_wa;
     reg  [31:0] d_wd;
@@ -99,6 +101,22 @@ module crystal_dcache (
     assign m_wdata = mw_hi ? mw_data[31:16] : mw_data[15:0];
     assign m_wbe   = mw_hi ? mw_be[3:2] : mw_be[1:0];
 
+    always @* begin
+        d_we = 1'b0; d_wa = a_q[12:2]; d_wd = wd_q; d_wbe = be_q;
+        t_we = 1'b0; t_wa = a_q[12:4]; t_wd = {1'b1, a_q[24:13]};
+        case (st)
+            S_CLR: begin t_we = 1'b1; t_wa = clr_i; t_wd = 14'd0; end
+            S_WRH: d_we = (t_q == {1'b1, a_q[24:13]});
+            S_FILL: begin
+                if (m_rvalid && fill_i[0]) begin
+                    d_we = 1'b1; d_wa = {a_q[12:4], fill_i[2:1]}; d_wd = {m_rdata, fill_acc[15:0]}; d_wbe = 4'hf;
+                end
+                if (m_done) t_we = 1'b1;
+            end
+            default: ;
+        endcase
+    end
+
     wire f_push = rst_n && st == S_IDLE && req && !ack_r && we && (addr[24:23] == 2'b00 || addr[24:23] == 2'b11) && !f_full;
     wire f_pop  = rst_n && ms == 2'd1 && m_done;
 
@@ -106,8 +124,6 @@ module crystal_dcache (
         ack_r <= 1'b0;
         inv   <= 1'b0;
         if (rst_n) f_cnt <= f_cnt + (f_push ? 4'd1 : 4'd0) - (f_pop ? 4'd1 : 4'd0);
-        d_we  <= 1'b0;
-        t_we  <= 1'b0;
         if (!rst_n) begin
             st <= S_CLR; clr_i <= 9'd0;
             m_req <= 1'b0; ms <= 2'd0;
@@ -138,7 +154,6 @@ module crystal_dcache (
 
             case (st)
             S_CLR: begin
-                t_we <= 1'b1; t_wa <= clr_i; t_wd <= 14'd0;
                 clr_i <= clr_i + 9'd1;
                 if (clr_i == 9'd511) st <= S_IDLE;
             end
@@ -166,9 +181,6 @@ module crystal_dcache (
                     st <= S_LOOK;
             end
             S_WRH: begin
-                if (t_q == {1'b1, a_q[24:13]}) begin
-                    d_we <= 1'b1; d_wa <= a_q[12:2]; d_wd <= wd_q; d_wbe <= be_q;
-                end
                 ack_r <= 1'b1;
                 st <= S_IDLE;
             end
@@ -198,16 +210,12 @@ module crystal_dcache (
                     logic [31:0] acc;
                     acc = fill_i[0] ? {m_rdata, fill_acc[15:0]} : {16'd0, m_rdata};
                     fill_acc <= acc;
-                    if (fill_i[0]) begin
-                        d_we <= 1'b1; d_wa <= {a_q[12:4], fill_i[2:1]}; d_wd <= acc; d_wbe <= 4'hf;
-                        if (fill_i[2:1] == a_q[3:2]) begin rd_r <= acc; ack_r <= 1'b1; end
-                    end
+                    if (fill_i[0] && fill_i[2:1] == a_q[3:2]) begin rd_r <= acc; ack_r <= 1'b1; end
                     fill_i <= fill_i + 4'd1;
                 end
                 if (m_done) begin
                     m_req <= 1'b0;
                     ms <= 2'd0;
-                    t_we <= 1'b1; t_wa <= a_q[12:4]; t_wd <= {1'b1, a_q[24:13]};
                     st <= S_IDLE;
                 end
             end

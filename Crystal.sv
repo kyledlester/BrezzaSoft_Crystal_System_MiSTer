@@ -83,7 +83,8 @@ wire   [1:0] buttons;
 wire [127:0] status;
 wire  [31:0] joystick_0, joystick_1, joystick_2, joystick_3;
 
-wire        ioctl_download, ioctl_wr, ioctl_wait;
+wire        ioctl_download, ioctl_wr, ioctl_wait, ioctl_upload, ioctl_rd, ioctl_upload_req;
+wire [15:0] ioctl_din;
 wire [64:0] rtc;
 wire [15:0] ioctl_index, ioctl_dout;
 wire [26:0] ioctl_addr;
@@ -109,6 +110,11 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_dout),
 	.ioctl_wait(ioctl_wait),
+	.ioctl_upload(ioctl_upload),
+	.ioctl_upload_req(ioctl_upload_req),
+	.ioctl_upload_index(8'd2),
+	.ioctl_din(ioctl_din),
+	.ioctl_rd(ioctl_rd),
 	.RTC(rtc)
 );
 
@@ -139,6 +145,7 @@ crystal_core core
 	.ioctl_addr(ioctl_addr),
 	.ioctl_dout(ioctl_dout),
 	.ioctl_wait(ioctl_wait),
+	.ioctl_upload(ioctl_upload), .ioctl_rd(ioctl_rd), .ioctl_din(ioctl_din), .ioctl_upload_req(ioctl_upload_req),
 	.joy0(joystick_0), .joy1(joystick_1), .joy2(joystick_2), .joy3(joystick_3),
 	.sw_test(status[5]),
 	.cpu_turbo(status[6]),
@@ -153,7 +160,8 @@ crystal_core core
 	.vsync(vsync),
 	.audio_l(snd_l), .audio_r(snd_r),
 	.rom_loading(rom_loading), .cpu_running(cpu_running),
-	.dbg_retire(), .dbg_pc(), .dbg_illegal(), .dbg_underflows(), .dbg_cpu_state(), .dbg_render_pixels()
+	.dbg_retire(), .dbg_pc(), .dbg_illegal(), .dbg_underflows(), .dbg_cpu_state(), .dbg_render_pixels(),
+	.dbg_d_ack(), .dbg_d_we(), .dbg_d_addr(), .dbg_d_be(), .dbg_d_data()
 );
 assign DDRAM_CLK = clk_sys;
 

@@ -242,6 +242,13 @@ int main(int argc, char **argv)
         }
         top->eval();
         // the CPU consumes a data acknowledge on the coming edge (it may be combinational): sample it now
+        {
+            static FILE *wf = getenv("WDUMP") ? fopen(getenv("WDUMP"), "w") : nullptr;
+            static bool all = getenv("WDUMP_ALL") != nullptr;
+            if (wf && top->dbg_d_ack && (top->dbg_d_we || all))
+                fprintf(wf, "%c %08x %x %08x\n", top->dbg_d_we ? 'W' : 'R', top->dbg_d_addr, top->dbg_d_be,
+                        top->dbg_d_we ? top->dbg_d_wdata : top->dbg_d_rdata);
+        }
         if (top->dbg_d_ack) {
             Acc a;
             a.we = top->dbg_d_we;

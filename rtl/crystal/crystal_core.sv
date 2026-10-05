@@ -14,6 +14,10 @@ module crystal_core (
     input  wire [26:0] ioctl_addr,
     input  wire [15:0] ioctl_dout,
     output wire        ioctl_wait,
+    input  wire        ioctl_upload,
+    input  wire        ioctl_rd,
+    output wire [15:0] ioctl_din,
+    output wire        ioctl_upload_req,
 
     input  wire [31:0] joy0, joy1, joy2, joy3,
     input  wire        sw_test,
@@ -60,8 +64,15 @@ module crystal_core (
     output wire        dbg_illegal,
     output wire [15:0] dbg_underflows,
     output wire  [4:0] dbg_cpu_state,
-    output wire [31:0] dbg_render_pixels
+    output wire [31:0] dbg_render_pixels,
+    output wire        dbg_d_ack,
+    output wire        dbg_d_we,
+    output wire [31:0] dbg_d_addr,
+    output wire  [3:0] dbg_d_be,
+    output wire [31:0] dbg_d_data
 );
+    wire [31:0] dbg_d_wdata_w, dbg_d_rdata_w;
+    assign dbg_d_data = dbg_d_we ? dbg_d_wdata_w : dbg_d_rdata_w;
     // ------------------------------------------------------------------ loader and reset
     wire        ld_busy, ld_loaded;
     wire  [7:0] game_id, dsw;
@@ -78,12 +89,14 @@ module crystal_core (
     crystal_loader loader (
         .clk(clk_sys), .pll_locked(pll_locked),
         .ioctl_download(ioctl_download), .ioctl_index(ioctl_index), .ioctl_wr(ioctl_wr), .ioctl_addr(ioctl_addr),
-        .ioctl_dout(ioctl_dout), .ioctl_wait(ioctl_wait),
+        .ioctl_dout(ioctl_dout), .ioctl_wait(ld_wait),
         .busy(ld_busy), .game_id(game_id), .flash_banks(flash_banks), .dsw(dsw), .loaded(ld_loaded),
         .f_req(lf_req), .f_addr(lf_addr), .f_data(lf_data), .f_be(lf_be), .f_ack(lf_ack),
         .s_req(ls_req), .s_addr(ls_addr), .s_len(ls_len), .s_wdata(ls_wdata), .s_wnext(ls_wnext), .s_done(ls_done)
     );
     assign rom_loading = ld_busy;
+    wire ld_wait, nv_wait;
+    assign ioctl_wait = ld_wait | nv_wait;
 
     reg [7:0] rst_cnt;
     reg       board_rst_n;
@@ -158,7 +171,8 @@ module crystal_core (
         .geo_hdisp(g_hdisp), .geo_vdisp(g_vdisp), .geo_vtot(g_vtot),
         .dbg_retire(dbg_retire), .dbg_pc(dbg_pc), .dbg_opcode(), .dbg_took_irq(), .dbg_illegal(dbg_illegal),
         .dbg_sr(), .dbg_sp(), .dbg_er(), .dbg_regs(), .dbg_cpu_state(dbg_cpu_state), .dbg_io_ack(), .dbg_io_rdata(), .dbg_cpu_irq(), .dbg_irq_vector(),
-        .dbg_vblank_start(), .dbg_d_ack(), .dbg_d_we(), .dbg_d_addr(), .dbg_d_be(), .dbg_d_wdata(), .dbg_d_rdata()
+        .dbg_vblank_start(), .dbg_d_ack(dbg_d_ack), .dbg_d_we(dbg_d_we), .dbg_d_addr(dbg_d_addr), .dbg_d_be(dbg_d_be),
+        .dbg_d_wdata(dbg_d_wdata_w), .dbg_d_rdata(dbg_d_rdata_w)
     );
 
     // RTC: load once when MiSTer's RTC becomes valid (rtc[64] toggles on every update)
@@ -257,15 +271,27 @@ module crystal_core (
     wire [24:0] dc_inv_addr;
     crystal_dcache dcache (
         .clk(clk_sys), .rst_n(board_rst_n),
-        .req(md_req && !md_addr[27]), .we(md_we), .addr(md_addr[24:0]), .be(md_be), .wdata(md_wdata),
+        .req(md_req && !md_addr[27] && !nv_sel), .we(md_we), .addr(md_addr[24:0]), .be(md_be), .wdata(md_wdata),
         .ack(dc_ack), .rdata(dc_rdata),
         .inv(da_inv), .inv_addr(dc_inv_addr), .wb_busy(wb_busy),
         .m_req(da_req), .m_we(da_we), .m_addr(da_addr), .m_len(da_len), .m_wdata(da_wdata16), .m_wbe(da_wbe2),
         .m_wnext(c_wnext[3]), .m_rvalid(c_rvalid[3]), .m_rdata(sd_rdata), .m_done(c_done[3])
     );
     // flash writes (outside the command dword, handled by the board) are ignored: ack immediately
-    assign md_ack   = md_addr[27] ? (md_we ? md_req : fr0_ack) : dc_ack;
-    assign md_rdata = md_addr[27] ? fr0_data : dc_rdata;
+    // NVRAM (block RAM, persistent through MiSTer): SDRAM-space alias 0x1820000-0x182FFFF
+    wire        nv_sel = !md_addr[27] && md_addr[24:16] == 9'h182;
+    wire        nv_ack;
+    wire [31:0] nv_rdata;
+    crystal_nvram nvram (
+        .clk(clk_sys),
+        .req(md_req && nv_sel), .we(md_we), .addr(md_addr[15:2]), .be(md_be), .wdata(md_wdata),
+        .ack(nv_ack), .rdata(nv_rdata),
+        .ioctl_download(ioctl_download), .ioctl_upload(ioctl_upload), .ioctl_index(ioctl_index), .ioctl_wr(ioctl_wr),
+        .ioctl_rd(ioctl_rd), .ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout), .ioctl_din(ioctl_din),
+        .ioctl_wait(nv_wait), .upload_req(ioctl_upload_req)
+    );
+    assign md_ack   = md_addr[27] ? (md_we ? md_req : fr0_ack) : nv_sel ? nv_ack : dc_ack;
+    assign md_rdata = md_addr[27] ? fr0_data : nv_sel ? nv_rdata : dc_rdata;
 
     // ------------------------------------------------------------------ scanout
     vr0_scanout scanout (

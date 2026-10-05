@@ -175,6 +175,37 @@ int main(int argc, char **argv)
     while (frame < frames) {
         tick();
         if (t->dbg_retire) retired++;
+        {
+            // every CPU flash-array read must return the ROM bytes of the selected bank
+            static uint32_t bankreg = 0;
+            static int flash_bad = 0;
+            if (t->dbg_d_ack && t->dbg_d_we && (t->dbg_d_addr & ~3u) == 0x01280000) bankreg = (t->dbg_d_data >> 1) & 7;
+            if (t->dbg_d_ack && !t->dbg_d_we && t->dbg_d_addr >= 0x05000004 && t->dbg_d_addr < 0x06000000 && bankreg < 3) {
+                uint32_t off = bankreg * 0x1000000 + (t->dbg_d_addr & 0xfffffc);
+                uint32_t exp = s0[off] | s0[off + 1] << 8 | s0[off + 2] << 16 | uint32_t(s0[off + 3]) << 24;
+                for (int k = 0; k < 4; k++) if (!((t->dbg_d_be >> k) & 1)) exp &= ~(0xffu << (8 * k));
+                uint32_t got = t->dbg_d_data;
+                for (int k = 0; k < 4; k++) if (!((t->dbg_d_be >> k) & 1)) got &= ~(0xffu << (8 * k));
+                bool prot = (off >> 4) == (0x7bb0 >> 4) || (off >> 4) == (0x9760 >> 4) || (off >> 4) == (0x8090 >> 4) || (off >> 4) == (0x8a50 >> 4);
+                if (got != exp && !prot && flash_bad++ < 10)
+                    printf("FLASH READ MISMATCH bank %u off %07x be %x got %08x expected %08x cycle %llu frame %d\n", bankreg, off, t->dbg_d_be, got, exp, (unsigned long long)cyc, frame);
+            }
+        }
+        {
+            static FILE *wf = getenv("WDUMP") ? fopen(getenv("WDUMP"), "w") : nullptr;
+            static bool all = getenv("WDUMP_ALL") != nullptr;
+            if (wf && t->dbg_d_ack && (t->dbg_d_we || all))
+                fprintf(wf, "%c %08x %x %08x\n", t->dbg_d_we ? 'W' : 'R', t->dbg_d_addr, t->dbg_d_be, t->dbg_d_data);
+        }
+        {
+            static int io_from = getenv("IOTRACE_FROM") ? atoi(getenv("IOTRACE_FROM")) : -1;
+            static int io_to = getenv("IOTRACE_TO") ? atoi(getenv("IOTRACE_TO")) : -1;
+            if (io_from >= 0 && frame >= io_from && frame <= io_to && t->dbg_d_ack) {
+                uint32_t a = t->dbg_d_addr;
+                if ((a >= 0x01200000 && a < 0x02000000) || (a >= 0x03000000 && a < 0x03010000) || (a >= 0x04800000 && a < 0x05000000) || (a & ~3u) == 0x05000000)
+                    printf("IO %c %08x be %x %08x frame %d cyc %llu\n", t->dbg_d_we ? 'W' : 'R', a, t->dbg_d_be, t->dbg_d_data, frame, (unsigned long long)cyc);
+            }
+        }
         st_hist[t->dbg_cpu_state & 31]++;
         if (t->dbg_illegal) { if (illegal++ < 4) printf("ILLEGAL opcode at pc %08x\n", t->dbg_pc); }
         if (t->ce_pix) {

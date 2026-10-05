@@ -7,6 +7,7 @@
 
   Index 1: board record (16 bytes): "CRYS", version 1, game id 1 (crysking: enables the isolated
            MAME-compatible protection overlay, docs/PROTECTION.md), populated flash banks 3.
+  Index 2: NVRAM image (zeros, then the saved .nvm), before index 0 so the board starts with it.
   Index 0: platform ROM stream. 0x0000000-0x2FFFFFF cartridge flash banks 0-2 (u1,u2,u3, file byte
            order = little-endian CPU byte order), 0x3000000-0x301FFFF BIOS (mx27l1000.u14, AMG0110B).
 -->
@@ -40,6 +41,13 @@
             43 52 59 53 01 01 03 00 00 00 00 00 00 00 00 00
         </part>
     </rom>
+
+    <!-- NVRAM (64 KiB battery RAM at 0x01400000, MAME nvram/crysking/nvram format): zero image (MAME default),
+         then MiSTer replaces it with the saved .nvm and saves it when the game has written it. -->
+    <rom index="2">
+        <part repeat="0x10000">00</part>
+    </rom>
+    <nvram index="2" size="65536"/>
 
     <rom index="0" zip="crysking.zip|crysbios.zip" md5="none">
         <!-- FLASH bank 0-2: MAME region "flash" (ROM_REGION32_LE 0x3000000) -->

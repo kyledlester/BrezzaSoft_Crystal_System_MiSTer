@@ -14,6 +14,6 @@ Category: A blocks BIOS, B blocks game, C blocks graphics/playability, D accurac
 | K8 | D | DS1302 starts at a fixed date in the reference model | RTL will use MiSTer RTC |
 | K9 | D | MAME test-menu reset workaround (`patchreset`) not implemented | revisit in M23 |
 | K10 | D | DMA unused by crysking; covered by scripts/sim/dma_test.sh (400 random transfers vs MAME-master algorithm) | closed |
-| K11 | D | Renderer 4/16 bpp, rotation, clamp paths implemented but not exercised by the crysking packet stream | open |
+| K11 | D | Renderer paths unused by crysking (4/16 bpp, rotation, clamp, all blend selections) covered by scripts/sim/render_random.sh: 25,000 random packets / 12.1M pixels identical | closed |
 | K12 | D | Odd PC fetches ignore bit 0 (MAME's unaligned word fetch behaviour depends on its memory system) | by design |
 | K13 | D | Sound EnvVol kept as the 24-bit register image between samples (MAME keeps an s32) | open |

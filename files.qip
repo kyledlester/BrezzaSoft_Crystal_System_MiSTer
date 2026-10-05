@@ -13,6 +13,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/memory/crystal_dcache.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/memory/crystal_flash_ddr.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_prot_overlay.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_loader.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_nvram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_ds1302.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_raster.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_board.sv
