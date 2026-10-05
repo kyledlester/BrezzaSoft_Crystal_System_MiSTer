@@ -139,10 +139,10 @@ public:
     struct Channel {
         uint32_t cur_saddr = 0;
         int32_t env_vol = 0;
-        uint8_t env_stage = 0;
+        uint8_t env_stage = 1;       // MAME channel_t defaults
         uint16_t ds_addr = 0;
         uint8_t modes = 0;
-        bool ld = false;
+        bool ld = true;
         uint32_t loop_begin = 0, loop_end = 0;
         uint8_t l_chn_vol = 0, r_chn_vol = 0;
         int32_t env_rate[4] = {};

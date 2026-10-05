@@ -785,7 +785,7 @@ void Board::sound_sample(int16_t &lo, int16_t &ro)
         } else {
             sample = int16_t(rd16((c.cur_saddr >> 9) & ~1u));
         }
-        c.cur_saddr += uint32_t((uint64_t(c.ds_addr) * uint32_t(div)) >> 16);
+        c.cur_saddr += uint32_t(int32_t(uint32_t(c.ds_addr) * uint32_t(div)) >> 16);   // C int arithmetic as MAME
         if (c.cur_saddr >= le) {
             if (c.modes & MODE_LOOP)
                 c.cur_saddr = (c.cur_saddr - le) + lb;

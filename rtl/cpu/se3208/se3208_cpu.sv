@@ -22,6 +22,7 @@ module se3208_cpu (
 
     output reg         i_req,
     output reg  [31:0] i_addr,
+    output wire [31:0] i_pre_addr,     // address of the fetch that may be issued at the next clock edge
     input  wire        i_ack,
     input  wire [15:0] i_data,
 
@@ -39,6 +40,7 @@ module se3208_cpu (
     output reg         iack,
 
     output reg         retire,
+    output reg         start,          // pulse: a new instruction fetch is issued (pacing credit consumed)
     output reg         illegal,
     output reg  [31:0] dbg_pc,      // address of the instruction that retired
     output reg  [15:0] dbg_opcode,
@@ -146,6 +148,7 @@ module se3208_cpu (
     } st_t;
     st_t st;
     assign dbg_state = st;
+    assign i_pre_addr = (st == S_DONE) ? {npc[31:1], 1'b0} : {PC[31:1], 1'b0};
 
     reg  [15:0] ir;
     op_t        op;
@@ -282,6 +285,7 @@ module se3208_cpu (
     integer k;
     always @(posedge clk) begin
         retire  <= 1'b0;
+        start   <= 1'b0;
         illegal <= 1'b0;
         iack    <= 1'b0;
         nmi_d   <= nmi;
@@ -308,21 +312,20 @@ module se3208_cpu (
                 if (start_ok) begin
                     i_req  <= 1'b1;
                     i_addr <= {PC[31:1], 1'b0};
+                    start  <= 1'b1;
                     st     <= S_FETCHW;
                 end
             end
             S_FETCHW: begin
                 if (i_ack) begin
-                    i_req <= 1'b0;
-                    ir    <= i_data;
-                    st    <= S_DECODE;
+                    // pre-decode here so EXEC starts with the operation class registered
+                    i_req    <= 1'b0;
+                    ir       <= i_data;
+                    op       <= decode(i_data);
+                    npc      <= PC + 32'd2;
+                    took_irq <= 1'b0;
+                    st       <= S_EXEC;
                 end
-            end
-            S_DECODE: begin
-                op       <= decode(ir);
-                npc      <= PC + 32'd2;
-                took_irq <= 1'b0;
-                st       <= S_EXEC;
             end
 
             // ---------------------------------------------------------- execute
@@ -724,7 +727,14 @@ module se3208_cpu (
                     dbg_pc       <= PC;
                     dbg_opcode   <= ir;
                     dbg_took_irq <= 1'b0;
-                    st           <= S_FETCH;
+                    // issue the next fetch right away when pacing allows
+                    if (start_ok) begin
+                        i_req  <= 1'b1;
+                        i_addr <= {npc[31:1], 1'b0};
+                        start  <= 1'b1;
+                        st     <= S_FETCHW;
+                    end else
+                        st <= S_FETCH;
                 end
             end
             S_IRQ0: begin   // push PC (next)
@@ -748,6 +758,6 @@ module se3208_cpu (
         end
     end
 
-    always @(posedge clk) if (st == S_DECODE) dbg_pc_hold <= PC;
+    always @(posedge clk) if (st == S_FETCHW && i_ack) dbg_pc_hold <= PC;
 
 endmodule

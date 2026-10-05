@@ -119,13 +119,16 @@ module crystal_core (
     reg         rtc_load;
     wire  [9:0] g_hdisp, g_vdisp, g_vtot;
     wire        mi_req, mi_ack, md_req, md_we, md_ack;
-    wire [27:0] mi_addr, md_addr;
+    wire [27:0] mi_addr, md_addr, mi_pre_addr;
     wire [15:0] mi_data;
     wire        vt_req, vf_req, vw_req;
     wire [23:0] vt_addr, vf_addr, vw_addr;
     wire  [5:0] vt_len, vf_len, vw_len;
     wire [15:0] vw_wdata;
     wire  [1:0] vw_wbe;
+    wire        ss_req;
+    wire [23:0] ss_addr;
+    wire  [5:0] ss_len;
     wire  [3:0] md_be;
     wire [31:0] md_wdata, md_rdata;
     wire [22:0] display_dest;
@@ -139,14 +142,16 @@ module crystal_core (
         .in_p1p2(in_p1p2), .in_p3p4(in_p3p4), .in_system(in_system), .in_dsw(dsw),
         .coin_counter(), .lamps(),
         .rtc_load(rtc_load), .rtc_bcd(rtc[47:0]),
-        .mi_req(mi_req), .mi_addr(mi_addr), .mi_ack(mi_ack), .mi_data(mi_data),
+        .mi_req(mi_req), .mi_addr(mi_addr), .mi_pre_addr(mi_pre_addr), .mi_ack(mi_ack), .mi_data(mi_data),
         .md_req(md_req), .md_we(md_we), .md_addr(md_addr), .md_be(md_be), .md_wdata(md_wdata), .md_ack(md_ack), .md_rdata(md_rdata),
         .vt_req(vt_req), .vt_addr(vt_addr), .vt_len(vt_len), .vt_rvalid(c_rvalid[4]), .vt_done(c_done[4]),
         .vf_req(vf_req), .vf_addr(vf_addr), .vf_len(vf_len), .vf_rvalid(c_rvalid[5]), .vf_done(c_done[5]),
         .v_rdata(sd_rdata),
         .vw_req(vw_req), .vw_addr(vw_addr), .vw_len(vw_len), .vw_wdata(vw_wdata), .vw_wbe(vw_wbe),
         .vw_wnext(c_wnext[6]), .vw_done(c_done[6]),
-        .tex_snoop(da_inv && md_addr[24:23] == 2'b01), .tex_snoop_addr(md_addr[24:1]),
+        .tex_snoop(da_inv && dc_inv_addr[24:23] == 2'b01), .tex_snoop_addr(dc_inv_addr[24:1]),
+        .ss_req(ss_req), .ss_addr(ss_addr), .ss_len(ss_len), .ss_rvalid(c_rvalid[1]), .ss_rdata(sd_rdata), .ss_done(c_done[1]),
+        .audio_l(audio_l), .audio_r(audio_r),
         .dbg_render_pixels(dbg_render_pixels),
         .ce_pix(ce_pix), .hcnt(hcnt), .vcnt(vcnt), .hblank(hb0), .vblank(vb0), .hsync(hs0), .vsync(vs0),
         .display_dest(display_dest), .crt_blank(crt_blank),
@@ -183,21 +188,20 @@ module crystal_core (
     wire        ic_req;
     wire [23:0] ic_addr;
     wire  [5:0] ic_len;
-    // client 3: CPU/DMA data adapter
-    reg         da_inv;
-    reg         da_req, da_we;
-    reg  [23:0] da_addr;
-    reg   [5:0] da_len;
-    reg  [31:0] da_wdata;
-    reg   [3:0] da_be;
-    reg         da_word;          // which 16-bit word is presented for writing
+    // client 3: CPU/DMA data (D-cache)
+    wire        da_inv;
+    wire        da_req, da_we;
+    wire [23:0] da_addr;
+    wire  [5:0] da_len;
+    wire [15:0] da_wdata16;
+    wire  [1:0] da_wbe2;
 
-    assign c_req   = {ls_req, vw_req, vf_req, vt_req, da_req, ic_req, 1'b0, sc_req};
+    assign c_req   = {ls_req, vw_req, vf_req, vt_req, da_req, ic_req, ss_req, sc_req};
     assign c_we    = {1'b1, 1'b1, 1'b0, 1'b0, da_we, 1'b0, 1'b0, 1'b0};
-    assign c_addr  = {ls_addr, vw_addr, vf_addr, vt_addr, da_addr, ic_addr, 24'd0, sc_addr};
-    assign c_len   = {ls_len, vw_len, vf_len, vt_len, da_len, ic_len, 6'd1, sc_len};
-    assign c_wdata = {ls_wdata, vw_wdata, 16'd0, 16'd0, (da_word ? da_wdata[31:16] : da_wdata[15:0]), 16'd0, 16'd0, 16'd0};
-    assign c_wbe   = {2'b11, vw_wbe, 2'b11, 2'b11, (da_word ? da_be[3:2] : da_be[1:0]), 2'b11, 2'b11, 2'b11};
+    assign c_addr  = {ls_addr, vw_addr, vf_addr, vt_addr, da_addr, ic_addr, ss_addr, sc_addr};
+    assign c_len   = {ls_len, vw_len, vf_len, vt_len, da_len, ic_len, ss_len, sc_len};
+    assign c_wdata = {ls_wdata, vw_wdata, 16'd0, 16'd0, da_wdata16, 16'd0, 16'd0, 16'd0};
+    assign c_wbe   = {2'b11, vw_wbe, 2'b11, 2'b11, da_wbe2, 2'b11, 2'b11, 2'b11};
     assign ls_wnext = c_wnext[7];
     assign ls_done  = c_done[7];
 
@@ -240,53 +244,28 @@ module crystal_core (
     wire [15:0] ic_data;
     crystal_icache icache (
         .clk(clk_sys), .rst_n(board_rst_n),
-        .req(mi_req && !mi_addr[27]), .addr(mi_addr[24:0]), .ack(ic_ack), .data(ic_data),
-        .inv(da_inv), .inv_addr(md_addr[24:0]),
+        .req(mi_req && !mi_addr[27]), .addr(mi_addr[24:0]), .pre_addr(mi_pre_addr[24:0]), .ack(ic_ack), .data(ic_data),
+        .inv(da_inv), .inv_addr(dc_inv_addr), .hold(wb_busy),
         .m_req(ic_req), .m_addr(ic_addr), .m_len(ic_len), .m_rvalid(c_rvalid[2]), .m_rdata(sd_rdata), .m_done(c_done[2])
     );
     assign mi_ack  = mi_addr[27] ? fr1_ack : ic_ack;
     assign mi_data = mi_addr[27] ? fr1_data : ic_data;
 
-    // ---- data port adapter (32-bit <-> 16-bit SDRAM words)
-    reg         da_busy, da_ack_r;
-    reg  [31:0] da_rdata;
-    reg         da_rhalf;          // next read word goes to the high half
-    always @(posedge clk_sys) begin
-        da_ack_r <= 1'b0;
-        da_inv   <= 1'b0;
-        if (!board_rst_n) begin
-            da_busy <= 1'b0; da_req <= 1'b0;
-        end else if (!da_busy && md_req && !md_addr[27] && !da_ack_r) begin
-            logic lo, hi;
-            lo = md_be[1:0] != 2'b00;
-            hi = md_be[3:2] != 2'b00;
-            da_busy  <= 1'b1;
-            da_req   <= 1'b1;
-            da_we    <= md_we;
-            da_wdata <= md_wdata;
-            da_be    <= md_be;
-            da_addr  <= {md_addr[24:2], (!lo && hi)};
-            da_len   <= (lo && hi) ? 6'd2 : 6'd1;
-            da_word  <= !lo && hi;
-            da_rhalf <= !lo && hi;
-            da_rdata <= 32'd0;
-            da_inv   <= md_we;
-        end else if (da_busy) begin
-            if (c_wnext[3]) da_word <= 1'b1;
-            if (c_rvalid[3]) begin
-                if (da_rhalf) da_rdata[31:16] <= sd_rdata; else da_rdata[15:0] <= sd_rdata;
-                da_rhalf <= 1'b1;
-            end
-            if (c_done[3]) begin
-                da_req   <= 1'b0;
-                da_busy  <= 1'b0;
-                da_ack_r <= 1'b1;
-            end
-        end
-    end
+    // ---- data port: D-cache + posted writes (CPU/DMA)
+    wire        dc_ack, wb_busy;
+    wire [31:0] dc_rdata;
+    wire [24:0] dc_inv_addr;
+    crystal_dcache dcache (
+        .clk(clk_sys), .rst_n(board_rst_n),
+        .req(md_req && !md_addr[27]), .we(md_we), .addr(md_addr[24:0]), .be(md_be), .wdata(md_wdata),
+        .ack(dc_ack), .rdata(dc_rdata),
+        .inv(da_inv), .inv_addr(dc_inv_addr), .wb_busy(wb_busy),
+        .m_req(da_req), .m_we(da_we), .m_addr(da_addr), .m_len(da_len), .m_wdata(da_wdata16), .m_wbe(da_wbe2),
+        .m_wnext(c_wnext[3]), .m_rvalid(c_rvalid[3]), .m_rdata(sd_rdata), .m_done(c_done[3])
+    );
     // flash writes (outside the command dword, handled by the board) are ignored: ack immediately
-    assign md_ack   = md_addr[27] ? (md_we ? md_req : fr0_ack) : da_ack_r;
-    assign md_rdata = md_addr[27] ? fr0_data : da_rdata;
+    assign md_ack   = md_addr[27] ? (md_we ? md_req : fr0_ack) : dc_ack;
+    assign md_rdata = md_addr[27] ? fr0_data : dc_rdata;
 
     // ------------------------------------------------------------------ scanout
     vr0_scanout scanout (
@@ -303,6 +282,4 @@ module crystal_core (
         hblank <= hb0; vblank <= vb0; hsync <= hs0; vsync <= vs0;
     end
 
-    assign audio_l = 16'sd0;
-    assign audio_r = 16'sd0;
 endmodule

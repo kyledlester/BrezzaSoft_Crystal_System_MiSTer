@@ -12,11 +12,13 @@ module crystal_icache (
 
     input  wire        req,
     input  wire [24:0] addr,          // SDRAM byte address (bit 0 ignored)
-    output reg         ack,
-    output reg  [15:0] data,
+    input  wire [24:0] pre_addr,      // likely address of the next request (read the RAMs one clock early)
+    output wire        ack,
+    output wire [15:0] data,
 
     input  wire        inv,           // data write
     input  wire [24:0] inv_addr,
+    input  wire        hold,          // posted data writes pending: do not read SDRAM yet
 
     output reg         m_req,
     output reg  [23:0] m_addr,        // SDRAM word address
@@ -30,10 +32,21 @@ module crystal_icache (
     (* ramstyle = "M10K" *) reg [13:0] tag  [0:511];   // {valid, addr[24:12]}, index addr[12:4]
     (* ramstyle = "M10K" *) reg [15:0] dram [0:4095];  // index addr[12:1]
     reg  [24:0] a_q;
+    reg  [24:0] rd_q;                 // address the RAM outputs belong to
     reg  [13:0] tag_q;
     reg  [15:0] d_q;
     reg   [2:0] fill_i;
     reg         answered, fill_inv, look_inv;
+    reg         ack_r;
+    reg  [15:0] data_r;
+    wire        hit_look = (st == S_LOOK) && tag_q == {1'b1, a_q[24:12]} && !look_inv && !(inv_c && inv_addr[12:4] == a_q[12:4]);
+    // early hit: request in IDLE whose address was read last clock through pre_addr
+    wire        hit_idle = (st == S_IDLE) && req && !ack_r && cacheable && rd_q[24:1] == addr[24:1] &&
+                           tag_q == {1'b1, addr[24:12]} && !look_inv_pre && !(inv_c && inv_addr[12:4] == addr[12:4]);
+    wire        hit = hit_look || hit_idle;
+    reg         look_inv_pre;
+    assign ack  = hit || ack_r;
+    assign data = hit ? d_q : data_r;
     reg   [8:0] clr_i;
 
     wire cacheable = (addr[24:23] == 2'b00) || (addr[24:23] == 2'b11);
@@ -56,11 +69,13 @@ module crystal_icache (
     reg [15:0] da_d;
     always @(posedge clk) begin
         if (da_we) dram[da_wa] <= da_d;
-        d_q <= dram[addr[12:1]];
+        d_q <= dram[rd_addr[12:1]];
     end
 
+    // RAM read address: in IDLE the pre-address (unless a request is waiting there), else the request
+    wire [24:0] rd_addr = (st == S_IDLE && !(req && !ack_r && !hit_idle)) ? pre_addr : addr;
     always @* begin
-        ta_we = 1'b0; ta_a = addr[12:4]; ta_d = 14'd0;
+        ta_we = 1'b0; ta_a = rd_addr[12:4]; ta_d = 14'd0;
         da_we = 1'b0; da_wa = {line_q, fill_i}; da_d = m_rdata;
         case (st)
             S_CLR:  begin ta_we = 1'b1; ta_a = clr_i; ta_d = 14'd0; end
@@ -80,7 +95,9 @@ module crystal_icache (
     end
 
     always @(posedge clk) begin
-        ack <= 1'b0;
+        ack_r <= 1'b0;
+        rd_q  <= (st == S_LOOK) ? a_q : rd_addr;
+        look_inv_pre <= inv_c && inv_addr[12:4] == rd_addr[12:4];
         if (!rst_n) begin
             st <= S_CLR;
             clr_i <= 9'd0;
@@ -91,11 +108,11 @@ module crystal_icache (
                 clr_i <= clr_i + 9'd1;
                 if (clr_i == 9'd511) st <= S_IDLE;
             end
-            S_IDLE: if (req && !ack) begin
+            S_IDLE: if (req && !ack_r && !hit_idle) begin
                 a_q      <= addr;
                 look_inv <= inv_c && inv_addr[12:4] == addr[12:4];
                 if (cacheable) st <= S_LOOK;
-                else begin
+                else if (!hold) begin
                     st     <= S_NC;
                     m_req  <= 1'b1;
                     m_addr <= addr[24:1];
@@ -103,11 +120,9 @@ module crystal_icache (
                 end
             end
             S_LOOK: begin
-                if (tag_q == {1'b1, a_q[24:12]} && !look_inv && !(inv_c && inv_addr[12:4] == line_q)) begin
-                    ack  <= 1'b1;
-                    data <= d_q;
-                    st   <= S_IDLE;
-                end else begin
+                if (hit) begin
+                    st <= S_IDLE;
+                end else if (!hold) begin
                     m_req    <= 1'b1;
                     m_addr   <= {a_q[24:4], 3'd0};
                     m_len    <= 6'd8;
@@ -122,8 +137,8 @@ module crystal_icache (
                 if (m_rvalid) begin
                     fill_i <= fill_i + 3'd1;
                     if (fill_i == a_q[3:1] && !answered) begin
-                        ack      <= 1'b1;
-                        data     <= m_rdata;
+                        ack_r    <= 1'b1;
+                        data_r   <= m_rdata;
                         answered <= 1'b1;
                     end
                     if (fill_i == 3'd7) begin
@@ -134,7 +149,7 @@ module crystal_icache (
                 if (m_done) m_req <= 1'b0;
             end
             S_NC: begin
-                if (m_rvalid) begin ack <= 1'b1; data <= m_rdata; end
+                if (m_rvalid) begin ack_r <= 1'b1; data_r <= m_rdata; end
                 if (m_done) begin m_req <= 1'b0; st <= S_IDLE; end
             end
             default: st <= S_IDLE;

@@ -6,8 +6,10 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/vrender0/vr0_video_regs.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/vrender0/vr0_sound_regs.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/vrender0/vr0_scanout.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/vrender0/vr0_render.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/vrender0/vr0_sound.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/memory/crystal_sdram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/memory/crystal_icache.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/memory/crystal_dcache.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/memory/crystal_flash_ddr.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_prot_overlay.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_loader.sv

@@ -198,6 +198,15 @@ int main(int argc, char **argv)
         top->vt_rvalid = 0; top->vt_done = 0; top->vf_rvalid = 0; top->vf_done = 0; top->vw_wnext = 0;
         top->vw_done = cw.done_pending; cw.done_pending = false;
         top->tex_snoop = 0;
+        top->ss_rvalid = 0; top->ss_done = 0;
+        {
+            static int sw = -1;
+            if (top->ss_req) {
+                if (sw < 0) sw = 2;
+                if (sw == 0) { top->ss_rvalid = 1; top->ss_done = 1; top->ss_rdata = sd_word(top->ss_addr); sw = -2; }
+                else if (sw > 0) sw--;
+            } else sw = -1;
+        }
         {
             bool tr = false, fr = false;
             if (top->vt_req && !ct.active) { ct = {true, top->vt_addr, top->vt_len, int(1 + rnd() % 4), false}; }
@@ -231,19 +240,8 @@ int main(int argc, char **argv)
             cw.addr++;
             if (--cw.left == 0) { cw.active = false; cw.done_pending = true; }
         }
-        top->clk = 1;
         top->eval();
-        if (pi.wait >= 0) { if (top->mi_ack) pi.wait = -1; else pi.wait--; }
-        if (pd.wait >= 0) { if (top->md_ack) pd.wait = -1; else pd.wait--; }
-
-        top->clk = 0;
-        top->eval();
-        cycles++;
-
-        if (top->dbg_vblank_start) {
-            frames++;
-            if (frames % 60 == 0) { printf("frame %llu insns %llu cycles %llu pc %08x irqs %llu\n", (unsigned long long)frames, (unsigned long long)insns, (unsigned long long)cycles, ref.s.PC, (unsigned long long)irqs); fflush(stdout); }
-        }
+        // the CPU consumes a data acknowledge on the coming edge (it may be combinational): sample it now
         if (top->dbg_d_ack) {
             Acc a;
             a.we = top->dbg_d_we;
@@ -260,6 +258,19 @@ int main(int argc, char **argv)
                 pending.push_back(a);
             if (io_trace && (a.addr >= 0x01200000 && a.addr < 0x02000000 || a.addr >= 0x03000000 && a.addr < 0x03010000 || a.addr >= 0x04800000 && a.addr < 0x05000000))
                 printf("IO %c %08x/%d %08x  insn %llu frame %llu cyc %llu\n", a.we ? 'W' : 'R', a.addr, a.size, a.data, (unsigned long long)insns, (unsigned long long)frames, (unsigned long long)cycles);
+        }
+        top->clk = 1;
+        top->eval();
+        if (pi.wait >= 0) { if (top->mi_ack) pi.wait = -1; else pi.wait--; }
+        if (pd.wait >= 0) { if (top->md_ack) pd.wait = -1; else pd.wait--; }
+
+        top->clk = 0;
+        top->eval();
+        cycles++;
+
+        if (top->dbg_vblank_start) {
+            frames++;
+            if (frames % 60 == 0) { printf("frame %llu insns %llu cycles %llu pc %08x irqs %llu\n", (unsigned long long)frames, (unsigned long long)insns, (unsigned long long)cycles, ref.s.PC, (unsigned long long)irqs); fflush(stdout); }
         }
         if (top->dbg_illegal) { mismatch = true; why = "RTL reports an illegal opcode"; }
         if (top->dbg_retire) {
@@ -297,7 +308,7 @@ int main(int argc, char **argv)
             if (progress && insns % progress == 0) { printf("  %llu insns, frame %llu, pc %08x\n", (unsigned long long)insns, (unsigned long long)frames, s.PC); fflush(stdout); }
         }
     }
-    if (mismatch && insns == 0) printf("  why: %s\n", why.c_str());
+    if (mismatch) printf("  why: %s\n", why.c_str());
     printf("BOARD LOCKSTEP: %s insns=%llu frames=%llu cycles=%llu irqs=%llu final pc=%08x  (%.2f cycles/insn)\n",
            mismatch ? "FAIL" : "PASS", (unsigned long long)insns, (unsigned long long)frames, (unsigned long long)cycles,
            (unsigned long long)irqs, ref.s.PC, insns ? double(cycles) / insns : 0.0);

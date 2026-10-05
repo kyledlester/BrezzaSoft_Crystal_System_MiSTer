@@ -32,15 +32,16 @@ module crystal_board (
     // memory port I: instruction fetch (16-bit)
     output wire        mi_req,
     output wire [27:0] mi_addr,
+    output wire [27:0] mi_pre_addr,
     input  wire        mi_ack,
     input  wire [15:0] mi_data,
 
     // memory port D: CPU/DMA data (32-bit, byte enables, lane-placed)
-    output reg         md_req,
-    output reg         md_we,
-    output reg  [27:0] md_addr,           // dword aligned
-    output reg   [3:0] md_be,
-    output reg  [31:0] md_wdata,
+    output wire        md_req,
+    output wire        md_we,
+    output wire [27:0] md_addr,           // dword aligned
+    output wire  [3:0] md_be,
+    output wire [31:0] md_wdata,
     input  wire        md_ack,
     input  wire [31:0] md_rdata,
 
@@ -63,6 +64,15 @@ module crystal_board (
     output wire  [1:0] vw_wbe,
     input  wire        vw_wnext,
     input  wire        vw_done,
+    // sound engine SDRAM client and output
+    output wire        ss_req,
+    output wire [23:0] ss_addr,
+    output wire  [5:0] ss_len,
+    input  wire        ss_rvalid,
+    input  wire [15:0] ss_rdata,
+    input  wire        ss_done,
+    output wire signed [15:0] audio_l,
+    output wire signed [15:0] audio_r,
     input  wire        tex_snoop,        // CPU/DMA write to texture RAM (SDRAM word address)
     input  wire [23:0] tex_snoop_addr,
     output wire [31:0] dbg_render_pixels,
@@ -105,8 +115,8 @@ module crystal_board (
     output wire [31:0] dbg_d_rdata
 );
     // ------------------------------------------------------------------ CPU and pacing
-    wire        i_req, d_req, d_we, retire, iack;
-    wire [31:0] i_addr, d_addr, d_wdata, d_rdata;
+    wire        i_req, d_req, d_we, retire, iack, istart;
+    wire [31:0] i_addr, d_addr, d_wdata, d_rdata, i_pre_addr;
     wire [15:0] i_data;
     wire  [3:0] d_be;
     wire        d_ack, i_ack;
@@ -123,7 +133,7 @@ module crystal_board (
             logic inc;
             inc  = (pace == 3'd5);
             pace <= inc ? 3'd0 : pace + 3'd1;
-            case ({inc && credit < {1'b0, cpu_credit_max}, retire})
+            case ({inc && credit < {1'b0, cpu_credit_max}, istart})
                 2'b10: credit <= credit + 7'd1;
                 2'b01: credit <= credit - 7'd1;
                 default: ;
@@ -133,10 +143,10 @@ module crystal_board (
 
     se3208_cpu cpu (
         .clk(clk), .rst_n(rst_n), .start_ok(cpu_turbo || credit != 7'd0),
-        .i_req(i_req), .i_addr(i_addr), .i_ack(i_ack), .i_data(i_data),
+        .i_req(i_req), .i_addr(i_addr), .i_pre_addr(i_pre_addr), .i_ack(i_ack), .i_data(i_data),
         .d_req(d_req), .d_we(d_we), .d_addr(d_addr), .d_be(d_be), .d_wdata(d_wdata), .d_ack(d_ack), .d_rdata(d_rdata),
         .irq(cpu_irq), .nmi(1'b0), .irq_vector(irq_vector), .iack(iack),
-        .retire(retire), .illegal(dbg_illegal), .dbg_pc(dbg_pc), .dbg_opcode(dbg_opcode), .dbg_took_irq(dbg_took_irq),
+        .retire(retire), .start(istart), .illegal(dbg_illegal), .dbg_pc(dbg_pc), .dbg_opcode(dbg_opcode), .dbg_took_irq(dbg_took_irq),
         .dbg_sr(dbg_sr), .dbg_sp(dbg_sp), .dbg_er(dbg_er), .dbg_regs(dbg_regs), .dbg_state(dbg_cpu_state)
     );
     assign dbg_retire     = retire;
@@ -168,6 +178,8 @@ module crystal_board (
     // instruction fetches: memory regions only (unmapped/I-O fetches read 0)
     wire [28:0] i_phys = phys_of(i_addr, bank, flash_banks);
     wire        i_erased = (i_addr >= 32'h05000000 && i_addr < 32'h06000000 && !i_phys[28]);
+    wire [28:0] i_pre_phys = phys_of(i_pre_addr, bank, flash_banks);
+    assign mi_pre_addr = i_pre_phys[27:0];
     assign mi_req  = i_req && i_phys[28];
     assign mi_addr = i_phys[27:0];
     assign i_ack   = i_req && (i_phys[28] ? mi_ack : 1'b1);
@@ -186,8 +198,20 @@ module crystal_board (
     reg         b_ack;              // one-cycle completion pulse to the owning master
     reg         b_owner_dma;
 
-    assign d_ack   = b_ack && !b_owner_dma;
-    assign d_rdata = b_rdata;
+    // registered bus path (I/O, flash command register, DMA) and a direct CPU path for memory regions
+    reg         mdr_req, mdr_we;
+    reg  [27:0] mdr_addr;
+    reg   [3:0] mdr_be;
+    reg  [31:0] mdr_wdata;
+    wire [28:0] d_phys    = phys_of(d_addr, bank, flash_banks);
+    wire        d_direct  = (bs == B_IDLE) && d_req && !dma_req && d_phys[28] && d_addr[31:2] != 30'h01400000;
+    assign md_req   = d_direct ? 1'b1 : mdr_req;
+    assign md_we    = d_direct ? (d_we && (d_addr >= 32'h00020000) && !(d_addr >= 32'h05000000 && d_addr < 32'h06000000)) : mdr_we;
+    assign md_addr  = d_direct ? {d_phys[27:2], 2'b00} : mdr_addr;
+    assign md_be    = d_direct ? d_be : mdr_be;
+    assign md_wdata = d_direct ? d_wdata : mdr_wdata;
+    assign d_ack   = d_direct ? md_ack : (b_ack && !b_owner_dma);
+    assign d_rdata = d_direct ? md_rdata : b_rdata;
     wire   dma_ack = b_ack && b_owner_dma;
     reg    b_isio;
     assign dbg_io_ack   = b_ack && !b_owner_dma && b_isio;
@@ -205,7 +229,7 @@ module crystal_board (
         b_ack   <= 1'b0;
         sys_sel <= 1'b0; vid_sel <= 1'b0; snd_sel <= 1'b0;
         if (!rst_n) begin
-            bs <= B_IDLE; md_req <= 1'b0; grant_dma <= 1'b0;
+            bs <= B_IDLE; mdr_req <= 1'b0; grant_dma <= 1'b0;
             bank <= 3'd0; flashcmd <= 32'hff; coin_counter <= 2'd0; lamps <= 16'd0;
         end else begin
             case (bs)
@@ -213,7 +237,7 @@ module crystal_board (
                 // pick a master: DMA if requesting and the CPU is not, or alternate
                 logic use_dma;
                 use_dma = dma_req && (!d_req || !grant_dma);
-                if (d_req || dma_req) begin
+                if ((d_req || dma_req) && !d_direct) begin
                     logic [31:0] a;
                     logic [28:0] p;
                     grant_dma   <= use_dma;
@@ -229,11 +253,11 @@ module crystal_board (
                         b_isio <= 1'b1;
                         bs <= B_IO;
                     end else if (p[28]) begin
-                        md_req   <= 1'b1;
-                        md_we    <= (use_dma ? dma_we : d_we) && (a >= 32'h00020000) && !(a >= 32'h05000000 && a < 32'h06000000);
-                        md_addr  <= {p[27:2], 2'b00};
-                        md_be    <= use_dma ? dma_be : d_be;
-                        md_wdata <= use_dma ? dma_wdata : d_wdata;
+                        mdr_req   <= 1'b1;
+                        mdr_we    <= (use_dma ? dma_we : d_we) && (a >= 32'h00020000) && !(a >= 32'h05000000 && a < 32'h06000000);
+                        mdr_addr  <= {p[27:2], 2'b00};
+                        mdr_be    <= use_dma ? dma_be : d_be;
+                        mdr_wdata <= use_dma ? dma_wdata : d_wdata;
                         bs <= B_MEM;
                     end else begin
                         b_isio <= 1'b1;
@@ -243,7 +267,7 @@ module crystal_board (
             end
             B_MEM: begin
                 if (md_ack) begin
-                    md_req  <= 1'b0;
+                    mdr_req <= 1'b0;
                     // erased/unpopulated flash and ROM writes are handled by phys_of / md_we
                     b_rdata <= md_rdata;
                     b_ack   <= 1'b1;
@@ -279,10 +303,10 @@ module crystal_board (
                         if (flashcmd[7:0] == 8'hff) begin
                             if ({1'b0, bank} < flash_banks) begin
                                 // array read of the bank's first dword
-                                md_req   <= 1'b1;
-                                md_we    <= 1'b0;
-                                md_addr  <= {1'b1, bank, 24'd0};
-                                md_be    <= 4'hf;
+                                mdr_req  <= 1'b1;
+                                mdr_we   <= 1'b0;
+                                mdr_addr <= {1'b1, bank, 24'd0};
+                                mdr_be   <= 4'hf;
                                 bs       <= B_MEM;
                             end else board_rdata <= 32'hffffffff;
                         end else if (flashcmd[7:0] == 8'h90)
@@ -362,7 +386,9 @@ module crystal_board (
     reg         coin1_q, coin2_q;
     always @(posedge clk) begin coin1_q <= in_system[4]; coin2_q <= in_system[5]; end
     wire        vid_vblank_irq;
+    wire snd_irq;
     assign irq_req = (32'd1 << 24) & {32{vid_vblank_irq}}
+                   | (32'd1 << 2)  & {32{snd_irq}}
                    | (32'd1 << 12) & {32{coin1_q && !in_system[4]}}   // coin 1 pressed (active low)
                    | (32'd1 << 19) & {32{coin2_q && !in_system[5]}};
 
@@ -404,11 +430,28 @@ module crystal_board (
     );
 
     // ------------------------------------------------------------------ sound engine registers
+    wire [8:0]  s_eng_addr;
+    wire [15:0] s_eng_rdata, s_eng_wdata;
+    wire        s_eng_we;
+    wire [31:0] s_status, s_int_mask, s_int_pend, s_st_clr, s_pend_set, s_touched, s_touch_clr;
+    wire [4:0]  s_max_chan;
+    wire [7:0]  s_clk_num;
+    wire [15:0] s_ctrl;
     vr0_sound_regs sregs (
         .clk(clk), .rst_n(rst_n),
         .io_sel(snd_sel), .io_we(b_we), .io_addr(b_addr[11:2]), .io_be(b_be), .io_wdata(b_wdata), .io_rdata(snd_rdata),
-        .eng_addr(9'd0), .eng_rdata(), .eng_we(1'b0), .eng_wdata(16'd0),
-        .status(), .note_on(), .int_mask(), .int_pend(), .eng_status_clr(32'd0), .eng_pend_set(32'd0),
-        .max_chan(), .chan_clk_num(), .ctrl(), .irq_clear()
+        .eng_addr(s_eng_addr), .eng_rdata(s_eng_rdata), .eng_we(s_eng_we), .eng_wdata(s_eng_wdata),
+        .status(s_status), .note_on(), .int_mask(s_int_mask), .int_pend(s_int_pend), .eng_status_clr(s_st_clr),
+        .eng_pend_set(s_pend_set), .max_chan(s_max_chan), .chan_clk_num(s_clk_num), .ctrl(s_ctrl), .irq_clear(),
+        .touched(s_touched), .touch_clr(s_touch_clr)
+    );
+    vr0_sound sound (
+        .clk(clk), .rst_n(rst_n), .tick_in(1'b0),
+        .eng_addr(s_eng_addr), .eng_rdata(s_eng_rdata), .eng_we(s_eng_we), .eng_wdata(s_eng_wdata),
+        .status(s_status), .int_mask(s_int_mask), .int_pend(s_int_pend), .max_chan(s_max_chan),
+        .chan_clk_num(s_clk_num), .ctrl(s_ctrl), .eng_status_clr(s_st_clr), .eng_pend_set(s_pend_set),
+        .irq(snd_irq), .touched(s_touched), .touch_clr(s_touch_clr),
+        .m_req(ss_req), .m_addr(ss_addr), .m_len(ss_len), .m_rvalid(ss_rvalid), .m_rdata(ss_rdata), .m_done(ss_done),
+        .out_l(audio_l), .out_r(audio_r), .out_strobe()
     );
 endmodule

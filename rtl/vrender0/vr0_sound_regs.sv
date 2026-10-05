@@ -31,7 +31,9 @@ module vr0_sound_regs (
     output reg  [4:0]  max_chan,
     output reg  [7:0]  chan_clk_num,
     output reg  [15:0] ctrl,
-    output wire        irq_clear        // pulse when int_pend becomes 0 by a CPU write (informational)
+    output wire        irq_clear,       // pulse when int_pend becomes 0 by a CPU write (informational)
+    output reg  [31:0] touched,         // CPU wrote CurSAddr/EnvVol words (0-3) of channel n
+    input  wire [31:0] touch_clr
 );
     // channel RAM, 16-bit words, MAME channel_t::read layout stored as the read-back value
     reg [15:0] chram [0:511];
@@ -141,8 +143,13 @@ module vr0_sound_regs (
     end
 
     // channel RAM: CPU writes (lane 0 now, lane 1 next cycle), engine port
-    reg  [8:0]  ram_a;
-    reg  [15:0] ram_old;
+    always @(posedge clk) begin
+        logic [31:0] t;
+        t = touched & ~touch_clr;
+        if (wr && io_be[1:0] != 2'b00 && off_lo < 12'h400 && off_lo[4:3] == 2'b00) t[off_lo[9:5]] = 1'b1;
+        if (pend_hi && pend_hi_off < 12'h400 && pend_hi_off[4:3] == 2'b00) t[pend_hi_off[9:5]] = 1'b1;
+        touched <= rst_n ? t : 32'd0;
+    end
     always @(posedge clk) begin
         if (wr && io_be[1:0] != 2'b00 && off_lo < 12'h400) begin
             logic [8:0] a;
@@ -163,7 +170,7 @@ module vr0_sound_regs (
         eng_rdata <= chram[eng_addr];
     end
 
-    initial for (i = 0; i < 512; i++) chram[i] = (i % 16 == 3) ? 16'h6000 : 16'h0000;
+    initial for (i = 0; i < 512; i++) chram[i] = (i % 16 == 3) ? 16'h7100 : 16'h0000;   // MAME defaults: ld = 1, env_stage = 1
 
     // CPU reads (registered)
     always @(posedge clk) begin
