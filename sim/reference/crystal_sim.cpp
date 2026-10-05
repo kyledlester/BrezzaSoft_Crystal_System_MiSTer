@@ -81,7 +81,7 @@ int main(int argc, char **argv)
     std::vector<std::string> flash_paths;
     int frames = 600, snap_every = 0;
     std::set<int> snap_at;
-    bool pc_hist = false, pic289 = false;
+    bool pc_hist = false, pic289 = false, stats = false;
     std::multimap<int, std::string> input_events;
     std::map<int, std::string> dump_ram;
     long long stop_pc = -1;
@@ -101,6 +101,7 @@ int main(int argc, char **argv)
         else if (a == "--dma-log") dma_log = next();
         else if (a == "--wav") wav_path = next();
         else if (a == "--pic289") pic289 = true;
+        else if (a == "--stats") stats = true;
         else if (a == "--input") { std::string v = next(); input_events.emplace(atoi(v.c_str()), v.substr(v.find(':') + 1)); }
         else if (a == "--dump-ram") { std::string v = next(); dump_ram[atoi(v.c_str())] = v.substr(v.find(':') + 1); }
         else if (a == "--stop-pc") stop_pc = strtoll(next().c_str(), nullptr, 0);
@@ -206,6 +207,40 @@ int main(int argc, char **argv)
            (unsigned long long)b.packets_done, (unsigned long long)b.pixels_drawn, (unsigned long long)b.cpu.invalid_count,
            (unsigned long long)b.unmapped_reads, (unsigned long long)b.unmapped_writes, (unsigned long long)b.uart_tx_count);
     for (auto &l : b.log) printf("log: %s\n", l.c_str());
+    if (stats) {
+        auto &st = b.st;
+        static const char *rn[] = {"BIOS", "NVRAM", "WRAM", "TEX", "FRAME", "FLASH", "SYS", "VID", "SND", "BOARD", "OTHER"};
+        double fr = b.frame ? b.frame : 1;
+        printf("== memory accesses per frame (fetch / read / write)\n");
+        for (int r = 0; r < Board::Stats::R_N; r++)
+            if (st.fetch[r] || st.rd[r] || st.wr[r])
+                printf("  %-6s %12.0f %12.0f %12.0f\n", rn[r], st.fetch[r] / fr, st.rd[r] / fr, st.wr[r] / fr);
+        printf("  data sizes read 1/2/4: %llu %llu %llu  write 1/2/4: %llu %llu %llu\n", (unsigned long long)st.rd_size[1],
+               (unsigned long long)st.rd_size[2], (unsigned long long)st.rd_size[4], (unsigned long long)st.wr_size[1],
+               (unsigned long long)st.wr_size[2], (unsigned long long)st.wr_size[4]);
+        printf("== opcodes used\n");
+        for (int o = 0; o < se3208::OP_COUNT; o++)
+            if (st.op[o]) printf("  %-10s %llu\n", se3208::op_name(se3208::Op(o)), (unsigned long long)st.op[o]);
+        printf("  never used:");
+        for (int o = 1; o < se3208::OP_COUNT; o++) if (!st.op[o]) printf(" %s", se3208::op_name(se3208::Op(o)));
+        printf("\n== I/O registers read (dword addr: count)\n");
+        for (auto &e : st.io_rd) printf("  R %08x %llu\n", e.first, (unsigned long long)e.second);
+        printf("== I/O registers written\n");
+        for (auto &e : st.io_wr) printf("  W %08x %llu\n", e.first, (unsigned long long)e.second);
+        printf("== renderer\n  quads=%llu tex=%llu fill=%llu blend=%llu shade=%llu tiled=%llu bpp4/8/16=%llu/%llu/%llu rot=%llu scaled=%llu clamp=%llu trans=%llu flips=%llu pal_loads=%llu\n",
+               (unsigned long long)st.quads, (unsigned long long)st.quads_tex, (unsigned long long)st.quads_fill,
+               (unsigned long long)st.quads_blend, (unsigned long long)st.quads_shade, (unsigned long long)st.quads_tiled,
+               (unsigned long long)st.quads_bpp[0], (unsigned long long)st.quads_bpp[1], (unsigned long long)st.quads_bpp[2],
+               (unsigned long long)st.quads_rot, (unsigned long long)st.quads_scaled, (unsigned long long)st.quads_clamp,
+               (unsigned long long)st.quads_trans, (unsigned long long)st.flips, (unsigned long long)st.pal_loads);
+        printf("  per frame avg: considered %.0f written_tex %.0f fill %.0f skipped %.0f blend_fb_reads %.0f texels %.0f tiles %.0f\n",
+               st.px_considered / fr, st.px_written_tex / fr, st.px_fill / fr, st.px_skipped / fr, st.fb_reads_blend / fr,
+               st.texel_reads / fr, st.tile_reads / fr);
+        printf("  max per frame: written %llu considered %llu\n", (unsigned long long)st.max_frame_px, (unsigned long long)st.max_frame_considered);
+        for (auto &e : st.blend_modes) printf("  blend src=%02x dst=%02x quads=%llu\n", e.first >> 8, e.first & 0xff, (unsigned long long)e.second);
+        printf("== sound: modes_seen_mask=%08x ctrl_or=%04x max_chan=%u clk_num=%u voice_samples/frame=%.0f\n", st.snd_modes_seen,
+               st.snd_ctrl_seen, st.snd_max_chan_seen, st.snd_clk_seen, st.snd_voice_samples / fr);
+    }
     if (pc_hist) {
         std::vector<std::pair<uint64_t, uint32_t>> v;
         for (auto &h : hist) v.push_back({h.second, h.first});

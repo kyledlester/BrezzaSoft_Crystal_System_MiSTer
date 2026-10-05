@@ -138,6 +138,7 @@ void Board::step_insn()
     process_events();
     cpu.irq_line = int_line;
     cpu.step();
+    st.op[cpu.last_op]++;
 }
 
 void Board::run_ticks(uint64_t ticks)
@@ -305,6 +306,12 @@ void Board::screen_vblank()
         execute_flipping();
     }
     if (hooks.vblank) hooks.vblank(frame);
+    st.max_frame_px = std::max(st.max_frame_px, st.frame_px);
+    st.max_frame_considered = std::max(st.max_frame_considered, st.frame_considered);
+    st.frame_px = st.frame_considered = 0;
+    st.snd_max_chan_seen = std::max<uint32_t>(st.snd_max_chan_seen, snd_max_chan);
+    st.snd_ctrl_seen |= snd_ctrl;
+    if (snd_chan_clk_num) st.snd_clk_seen = snd_chan_clk_num;
     frame++;
     // next frame
     uint64_t frame_len = uint64_t(scr_htot) * scr_vtot * scr_tpp;
@@ -422,6 +429,7 @@ int Board::process_packet(uint32_t ptr)
     uint8_t blend_mode = 0;
     uint16_t p0 = pkt[0];
     if (p0 & 0x81) {
+        st.flips++;
         last_pal_update = 0xffffffff;
         return p0 & 0x81;
     }
@@ -470,6 +478,7 @@ int Board::process_packet(uint32_t ptr)
             internal_palette[i] = v;
         }
         last_pal_update = rs.pal_offset;
+        st.pal_loads++;
     }
     if (p0 & (1 << 8)) {
         Quad q;
@@ -491,6 +500,19 @@ int Board::process_packet(uint32_t ptr)
         q.theight = rs.height;
         q.trans = (p0 >> 2) & 1;
         q.clamp = (p0 >> 5) & 1;
+        st.quads++;
+        if (blend_mode & 1) { st.quads_blend++; st.blend_modes[(rs.src_blend << 8) | rs.dst_blend]++; }
+        if (blend_mode & 2) st.quads_shade++;
+        if (q.clamp) st.quads_clamp++;
+        if (q.trans) st.quads_trans++;
+        if (p0 & (1 << 3)) {
+            st.quads_tex++;
+            st.quads_bpp[rs.pixel_format == 0 ? 0 : rs.pixel_format == 1 ? 1 : 2]++;
+            if (rs.texture_mode) st.quads_tiled++;
+            if (q.tydx || q.txdy) st.quads_rot++;
+            else if (q.txdx != (1u << 9) || q.tydy != (1u << 9)) st.quads_scaled++;
+        } else
+            st.quads_fill++;
         if (p0 & (1 << 3)) {
             q.texaddr = 128 * rs.font_offset;
             q.tile = 128 * rs.tile_offset;
@@ -505,6 +527,8 @@ int Board::process_packet(uint32_t ptr)
                 for (uint32_t x = q.dx; int32_t(x) <= int32_t(q.endx); x++, x_tx += q.txdx, x_ty += q.tydx) {
                     uint32_t fba = q.dest + fb_addr(x, y);
                     uint32_t tx = uint32_t(x_tx) >> 9, ty = uint32_t(x_ty) >> 9;
+                    st.px_considered++;
+                    st.frame_considered++;
                     if (q.clamp) {
                         if (tx > maskw || ty > maskh) continue;
                     } else {
@@ -514,11 +538,13 @@ int Board::process_packet(uint32_t ptr)
                     uint32_t offset;
                     if (tiled) {
                         uint32_t index = tex16(q.tile + (((ty >> 3) * w + (tx >> 3)) << 1));
+                        st.tile_reads++;
                         if (index == 0) continue;
                         offset = (index << 6) + ((ty & 7) << 3) + (tx & 7);
                     } else
                         offset = ty * q.twidth + tx;
                     uint16_t color;
+                    st.texel_reads++;
                     if (bpp == 4) {
                         uint8_t texel = tex8(q.texaddr + (offset >> 1));
                         color = q.pal[(texel >> ((~offset & 1) << 2)) & 0xf];
@@ -534,7 +560,11 @@ int Board::process_packet(uint32_t ptr)
                         else pixel = color;
                         if (prev != pixel) fbw16(fba, pixel);
                         pixels_drawn++;
-                    }
+                        st.px_written_tex++;
+                        st.frame_px++;
+                        if (blend_mode & 1) st.fb_reads_blend++;
+                    } else
+                        st.px_skipped++;
                 }
             }
         } else {
@@ -546,6 +576,10 @@ int Board::process_packet(uint32_t ptr)
                     pixel = q.src_alpha ? do_alpha(q, shade_color, pixel) : shade_color;
                     if (prev != pixel) fbw16(fba, pixel);
                     pixels_drawn++;
+                    st.px_fill++;
+                    st.frame_px++;
+                    st.frame_considered++;
+                    if (q.src_alpha) st.fb_reads_blend++;
                 }
         }
     }
@@ -738,6 +772,7 @@ void Board::sound_sample(int16_t &lo, int16_t &ro)
         int32_t sample;
         uint32_t lb = c.loop_begin << 10, le = c.loop_end << 10;
         if (!(snd_status & (1u << i)) || !(snd_ctrl & CTRL_RS)) continue;
+        st.snd_voice_samples++;
         bool tex = (c.modes & MODE_TEXTURE) && (snd_ctrl & CTRL_TM);
         auto rd8 = [&](uint32_t a) -> uint8_t { return tex ? texram[a & 0x7fffff] : frameram[a & 0x7fffff]; };
         auto rd16 = [&](uint32_t a) -> uint16_t { return tex ? tex16(a) : fb16(a); };
@@ -896,7 +931,25 @@ void Board::Rtc::tick_second()
 
 uint16_t Board::fetch(uint32_t a)
 {
-    return uint16_t(read(a & ~1u, 2));
+    in_fetch = true;
+    uint16_t v = uint16_t(read(a & ~1u, 2));
+    in_fetch = false;
+    return v;
+}
+
+int Board::region(uint32_t a)
+{
+    if (a < 0x00020000) return Stats::R_BIOS;
+    if (a >= 0x01400000 && a < 0x01410000) return Stats::R_NVRAM;
+    if (a >= 0x02000000 && a < 0x03000000) return Stats::R_WRAM;
+    if (a >= 0x03800000 && a < 0x04000000) return Stats::R_TEX;
+    if (a >= 0x04000000 && a < 0x04800000) return Stats::R_FRAME;
+    if (a >= 0x05000000 && a < 0x06000000) return Stats::R_FLASH;
+    if (a >= 0x01800000 && a < 0x02000000) return Stats::R_SYS;
+    if (a >= 0x03000000 && a < 0x03010000) return Stats::R_VID;
+    if (a >= 0x04800000 && a < 0x04801000) return Stats::R_SND;
+    if (a >= 0x01200000 && a < 0x01400000) return Stats::R_BOARD;
+    return Stats::R_OTHER;
 }
 
 // VR0 system registers (base 0x01800000): 32-bit handlers; `off` is the dword-aligned offset.
@@ -1029,6 +1082,15 @@ uint32_t Board::read(uint32_t addr, int size)
         return v;
     };
     uint32_t r;
+    {
+        int rg = region(addr);
+        if (in_fetch) st.fetch[rg]++;
+        else {
+            st.rd[rg]++;
+            st.rd_size[size]++;
+            if (rg >= Stats::R_SYS || (rg == Stats::R_FLASH && (addr & ~3u) == 0x05000000)) st.io_rd[addr & ~3u]++;
+        }
+    }
     if (addr < 0x00020000) return ram_rd(bios, addr);
     if (addr >= 0x02000000 && addr < 0x03000000) return ram_rd(workram, addr & 0x7fffff);
     if (addr >= 0x01400000 && addr < 0x01410000) return ram_rd(nvram, addr & 0xffff);
@@ -1089,6 +1151,15 @@ void Board::write(uint32_t addr, int size, uint32_t data)
     auto ram_wr = [&](std::vector<uint8_t> &m, uint32_t off) {
         for (int i = 0; i < size; i++) m[off + i] = uint8_t(data >> (8 * i));
     };
+    {
+        int rg = region(addr);
+        st.wr[rg]++;
+        st.wr_size[size]++;
+        if (rg >= Stats::R_SYS || rg == Stats::R_FLASH) st.io_wr[addr & ~3u]++;
+        if (rg == Stats::R_SND) {
+            if ((addr & 0xfff) < 0x400 && ((addr >> 1) & 0xf) == 5) st.snd_modes_seen |= 1u << ((data >> 8) & 0x7f) % 32;
+        }
+    }
     if (addr < 0x00020000) return;  // ROM, nopw
     if (addr >= 0x02000000 && addr < 0x03000000) { ram_wr(workram, addr & 0x7fffff); return; }
     if (addr >= 0x01400000 && addr < 0x01410000) { ram_wr(nvram, addr & 0xffff); return; }

@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -180,7 +181,25 @@ public:
     uint16_t fb16(uint32_t a) const { a &= 0x7ffffe; return frameram[a] | (frameram[a + 1] << 8); }
     void fbw16(uint32_t a, uint16_t v) { a &= 0x7ffffe; frameram[a] = v & 0xff; frameram[a + 1] = v >> 8; }
 
-    // stats
+    // stats (research instrumentation; zero cost to behaviour)
+    struct Stats {
+        enum { R_BIOS, R_NVRAM, R_WRAM, R_TEX, R_FRAME, R_FLASH, R_SYS, R_VID, R_SND, R_BOARD, R_OTHER, R_N };
+        uint64_t fetch[R_N] = {}, rd[R_N] = {}, wr[R_N] = {};
+        uint64_t rd_size[5] = {}, wr_size[5] = {};
+        uint64_t unaligned = 0;
+        uint64_t op[se3208::OP_COUNT] = {};
+        std::map<uint32_t, uint64_t> io_rd, io_wr;
+        uint64_t quads = 0, quads_tex = 0, quads_fill = 0, quads_blend = 0, quads_shade = 0, quads_tiled = 0;
+        uint64_t quads_bpp[3] = {}, quads_rot = 0, quads_scaled = 0, quads_clamp = 0, quads_trans = 0, flips = 0;
+        uint64_t px_considered = 0, px_written_tex = 0, px_fill = 0, px_skipped = 0, fb_reads_blend = 0;
+        uint64_t texel_reads = 0, tile_reads = 0, pal_loads = 0;
+        uint64_t frame_px = 0, max_frame_px = 0, frame_considered = 0, max_frame_considered = 0;
+        std::map<uint32_t, uint64_t> blend_modes;   // (src_blend<<8)|dst_blend
+        uint32_t snd_modes_seen = 0, snd_ctrl_seen = 0, snd_max_chan_seen = 0, snd_clk_seen = 0;
+        uint64_t snd_voice_samples = 0;
+    } st;
+    bool in_fetch = false;
+    static int region(uint32_t a);
     uint64_t unmapped_reads = 0, unmapped_writes = 0;
     std::vector<std::string> log;
 private:
