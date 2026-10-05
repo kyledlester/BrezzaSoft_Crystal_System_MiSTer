@@ -23,7 +23,7 @@ module crystal_nvram #(
     input  wire  [3:0] be,
     input  wire [31:0] wdata,
     output reg         ack,
-    output reg  [31:0] rdata,
+    output reg  [31:0] rdata,      // valid with ack
 
     // hps_io (WIDE = 1)
     input  wire        ioctl_download,
@@ -37,50 +37,39 @@ module crystal_nvram #(
     output wire        ioctl_wait,
     output wire        upload_req
 );
-    (* ramstyle = "M10K" *) reg [31:0] ram [0:16383];
     reg        dirty = 1'b0;
     reg        sess_q = 1'b0;
-    reg [31:0] b_q;
     reg        b_half;
     reg  [1:0] rd_wait = 2'd0;
+    wire [31:0] a_q, b_q;
 
     assign upload_req = dirty;
     assign ioctl_din  = b_half ? b_q[31:16] : b_q[15:0];
     assign ioctl_wait = (rd_wait != 2'd0);
 
     wire sess = (ioctl_download || ioctl_upload) && ioctl_index == INDEX;
+    wire a_go = req && !ack;
+    wire b_wr = ioctl_download && ioctl_index == INDEX && ioctl_wr && ioctl_addr < 27'h10000;
 
-    // port A (CPU)
-    always @(posedge clk) begin
-        ack <= 1'b0;
-        if (req && !ack) begin
-            if (we) begin
-                if (be[0]) ram[addr][7:0]   <= wdata[7:0];
-                if (be[1]) ram[addr][15:8]  <= wdata[15:8];
-                if (be[2]) ram[addr][23:16] <= wdata[23:16];
-                if (be[3]) ram[addr][31:24] <= wdata[31:24];
-            end
-            rdata <= ram[addr];
-            ack   <= 1'b1;
-        end
-    end
+    // four byte lanes, true dual port: A = CPU, B = hps_io
+    genvar gl;
+    generate for (gl = 0; gl < 4; gl++) begin : g_lane
+        crystal_tdpram #(.AW(14), .DW(8)) lane (
+            .clk(clk),
+            .a_we(a_go && we && be[gl]), .a_addr(addr), .a_wdata(wdata[gl*8 +: 8]), .a_rdata(a_q[gl*8 +: 8]),
+            .b_we(b_wr && (ioctl_addr[1] == ((gl / 2) == 1))), .b_addr(ioctl_addr[15:2]),
+            .b_wdata((gl % 2) == 1 ? ioctl_dout[15:8] : ioctl_dout[7:0]), .b_rdata(b_q[gl*8 +: 8])
+        );
+    end endgenerate
 
-    // port B (hps_io)
     always @(posedge clk) begin
+        ack <= a_go;
         sess_q <= sess;
         if (sess && !sess_q) dirty <= 1'b0;
-        else if (req && !ack && we) dirty <= 1'b1;
-
+        else if (a_go && we) dirty <= 1'b1;
         if (rd_wait != 2'd0) rd_wait <= rd_wait - 2'd1;
-        if (ioctl_download && ioctl_index == INDEX && ioctl_wr && ioctl_addr < 27'h10000) begin
-            if (ioctl_addr[1]) ram[ioctl_addr[15:2]][31:16] <= ioctl_dout;
-            else               ram[ioctl_addr[15:2]][15:0]  <= ioctl_dout;
-        end
         if (ioctl_upload && ioctl_index == INDEX && ioctl_rd) rd_wait <= 2'd2;
-        b_q    <= ram[ioctl_addr[15:2]];
         b_half <= ioctl_addr[1];
     end
-
-    integer i;
-    initial for (i = 0; i < 16384; i++) ram[i] = 32'd0;
+    always @* rdata = a_q;
 endmodule

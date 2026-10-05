@@ -38,9 +38,8 @@ module crystal_dcache (
     input  wire        m_done
 );
     // ------------------------------------------------------------------ storage
-    (* ramstyle = "M10K" *) reg [31:0] dram [0:2047];   // index addr[12:2]
     (* ramstyle = "M10K" *) reg [13:0] tram [0:511];    // {valid, addr[24:23] bank, addr[22:13]} index addr[12:4]
-    reg  [31:0] d_q;
+    wire [31:0] d_q;
     reg  [13:0] t_q;
     // RAM write ports are driven combinationally by the state machine (below), so a write takes effect on the
     // same clock edge the FSM decides it and the next lookup can never read stale tags/data.
@@ -51,15 +50,14 @@ module crystal_dcache (
     reg         t_we;
     reg   [8:0] t_wa;
     reg  [13:0] t_wd;
-    always @(posedge clk) begin
-        if (d_we) begin
-            if (d_wbe[0]) dram[d_wa][7:0]   <= d_wd[7:0];
-            if (d_wbe[1]) dram[d_wa][15:8]  <= d_wd[15:8];
-            if (d_wbe[2]) dram[d_wa][23:16] <= d_wd[23:16];
-            if (d_wbe[3]) dram[d_wa][31:24] <= d_wd[31:24];
-        end
-        d_q <= dram[addr[12:2]];
-    end
+    // data: one 2048 x 8 block RAM per byte lane (byte-enable writes)
+    genvar gl;
+    generate for (gl = 0; gl < 4; gl++) begin : g_lane
+        crystal_sdpram #(.AW(11), .DW(8)) lane (
+            .clk(clk), .we(d_we && d_wbe[gl]), .waddr(d_wa), .wdata(d_wd[gl*8 +: 8]),
+            .raddr(addr[12:2]), .rdata(d_q[gl*8 +: 8])
+        );
+    end endgenerate
     always @(posedge clk) begin
         if (t_we) tram[t_wa] <= t_wd;
         t_q <= tram[addr[12:4]];

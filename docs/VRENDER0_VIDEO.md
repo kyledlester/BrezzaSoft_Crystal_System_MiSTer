@@ -61,3 +61,21 @@ Banks: `B0 = 0`, `B1 = 0x100000` (or `0x400000`). Front = `display_bank ? B1 : B
 **0 rotated, 0 alpha-blended, 0 clamped**; 3.4 K shaded; 3.0 K fills (screen clears); one flip-sync per frame.
 Palette (re)loads 25 K. Worst frame: 288 K textured pixels written, 336 K considered. Average frame: 72 K
 textured + 65 K fill pixels.
+
+## Display timing in the core (M17/M24)
+
+| Quantity | MAME (screen) | Core | Source |
+| --- | --- | --- | --- |
+| Pixel clock | 14.31818 MHz x2 / (div+1) | clk_sys / (6*(div+1)/2) = 7.159 MHz for crysking | CRTTIM 0x8B |
+| Total / visible pixels | HTOT+1 = 455 / HDISP+1 = 320 | same | HTOT 0x5C6 (b10 enable), HDISP 0x13F |
+| Total / visible lines | VTOT/2+1+9 = 262 / VDISP = 240 | same | VTOT 0x9F9, VDISP 0xF0 |
+| Frame rate | 59.94 Hz (7.159 MHz / 455 / 262 ... = 60.05 Hz) | 60.05 Hz | |
+| HSYNC | not modelled | starts HTOT - (HSW+1) - (HBP+1) = pixel 361, 34 px (4.75 us) | HSWBP 0x213B (the 34-pixel field matches NTSC sync width; MAME names the bytes the other way round) |
+| VSYNC | not modelled | 3 lines ending VBP+1 = 15 lines before the end of the frame (lines 244-246) | VSBP 0x0E |
+
+The geometry registers are applied at the next frame boundary (MAME re-times the screen at once; the difference is
+invisible: the game programs the CRTC once during boot). The vblank interrupt (IRQ 24) and the frame-buffer flip
+happen at the first line after the visible area, exactly as MAME's screen vblank callback. The hsync/vsync
+placement is a MiSTer/CRT presentation choice derived from the CRTC porch registers; it does not affect the game.
+The boot BIOS briefly programs 640x480 (831 x 617 total, 28.6 MHz pixel clock) before switching to 320x240, as the
+real board does ("vertical line" boot screen at ~20 kHz in the PCB notes); MiSTer's scaler follows the change.

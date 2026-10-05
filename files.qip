@@ -1,3 +1,4 @@
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/memory/crystal_ram.sv
 set_global_assignment -name SDC_FILE Crystal.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE Crystal.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/se3208/se3208_cpu.sv

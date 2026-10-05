@@ -8,6 +8,8 @@ try {
     New-Item -ItemType Directory -Force build | Out-Null
     & (Join-Path $QuartusRoot 'bin64\quartus_sh.exe') --flow compile Crystal *> build\quartus_flow.log
     $rc = $LASTEXITCODE
+    # Quartus rewrites Crystal.qsf with the expanded contents of the sourced Tcl files; keep the tracked copy clean
+    if (Test-Path .git) { & git checkout -- Crystal.qsf 2>$null }
     & python scripts\quartus_summary.py
     if ($rc -ne 0) { throw 'Quartus build failed; see build\quartus_flow.log and output_files reports.' }
 } finally { Pop-Location }
