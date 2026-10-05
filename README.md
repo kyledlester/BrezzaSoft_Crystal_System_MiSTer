@@ -46,6 +46,7 @@ Pause, Free Play, DSW 3-7 (unknown, as MAME), Test. Defaults: all Off.
 ## OSD
 
 * **Aspect ratio**, **Scandoubler Fx**: as other MiSTer arcade cores.
+* **DIP Switches**: the board's DSW (from the MRA): Pause, Free Play, DSW 3-7, Test (DSW:8). All Off by default; *Test* On boots into the BIOS set-up menu ("PLEASE DIP 8 OFF" when leaving it).
 * **CRT Adjust** submenu (native 15-kHz output, Scandoubler Fx None): *CRT Adjust* Off/On, *CRT H-Size* -12..+10 %,
   *CRT H-Position* -48..+42 pixels, *CRT V-Shift* -8..+7 lines (negative values stop at -3 so VSync never lands
   on the picture). Same menu, bits and behaviour as the NA-1/NA-2 and NB-1 cores; the sync never changes, so the

@@ -25,7 +25,7 @@
     <category>Fighter / Hack and Slash</category>
     <buttons names="Button 1,Button 2,Button 3,Button 4,Start,Coin,Service" default="A,B,X,Y,Start,Select,R"/>
 
-    <switches default="FF" base="16" page_id="1" page_name="Switches">
+    <switches default="FF" base="16">
         <dip bits="0" name="Pause" ids="On,Off"/>
         <dip bits="1" name="Free Play" ids="On,Off"/>
         <dip bits="2" name="Unknown (DSW:3)" ids="On,Off"/>

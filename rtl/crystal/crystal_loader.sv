@@ -74,8 +74,6 @@ module crystal_loader (
                             3'd3: flash_banks <= (ioctl_dout[3:0] == 4'd0) ? 4'd1 : (ioctl_dout[3:0] > 4'd8 ? 4'd8 : ioctl_dout[3:0]);
                             default: ;
                         endcase
-                    end else if (ioctl_index == 16'd254) begin
-                        if (ioctl_addr[26:1] == 26'd0) dsw <= ioctl_dout[7:0];
                     end else if (ioctl_index == 16'd0) begin
                         if (is_flash) begin
                             acc[{ioctl_addr[2:1], 4'd0} +: 16] <= ov_dout;
@@ -126,6 +124,9 @@ module crystal_loader (
                 end
             end
             endcase
+            // DIP switches (index 254) in any state: Main_MiSTer sends them right after the ROM stream, often
+            // while the RAM clear above is still running (they were dropped then)
+            if (ioctl_download && ioctl_wr && ioctl_index == 16'd254 && ioctl_addr[26:1] == 26'd0) dsw <= ioctl_dout[7:0];
             // a stream index other than 0 does not reset the board
             if (!ioctl_download && dl_q && ioctl_index != 16'd0 && loaded) busy <= busy;
         end

@@ -80,6 +80,7 @@ int main(int argc, char **argv)
     std::set<int> snap_at;
     std::multimap<int, std::string> inputs;
     bool turbo = false;
+    int dsw = -1;                         // >= 0: send the DIP switches on index 254 after the ROM download (as MiSTer)
     std::string wav;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -91,6 +92,7 @@ int main(int argc, char **argv)
         else if (a == "--out") out = nx();
         else if (a == "--input") { std::string v = nx(); inputs.emplace(atoi(v.c_str()), v.substr(v.find(':') + 1)); }
         else if (a == "--turbo") turbo = true;
+        else if (a == "--dsw") dsw = (int)strtol(nx().c_str(), nullptr, 16);
         else if (a == "--wav") wav = nx();
     }
     FILE *fw = wav.empty() ? nullptr : fopen(wav.c_str(), "wb");
@@ -154,6 +156,12 @@ int main(int argc, char **argv)
     for (int i = 0; i < 12000; i++) tick();
     download(1, s1);
     download(0, s0);
+    if (dsw >= 0) {
+        std::vector<uint8_t> d(8, 0);
+        d[0] = uint8_t(dsw);
+        download(254, d);
+        printf("DIP switches sent on index 254: %02x\n", dsw);
+    }
     printf("download done at cycle %llu, ddr writes %llu\n", (unsigned long long)cyc, (unsigned long long)ddr.writes);
     // verify the flash store image (protection words included) against the stream
     {
