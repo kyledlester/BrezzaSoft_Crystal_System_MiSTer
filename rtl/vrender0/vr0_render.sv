@@ -167,6 +167,8 @@ module vr0_render (
     reg        filling;
     reg  [1:0] fill_fin;              // clocks until the last written word is readable
     reg        fill_dirty;            // snooped while filling
+    reg        snoop_q;               // texture write snoop, registered
+    reg [21:4] snoop_a;
 
     // ------------------------------------------------------------------ pixel pipeline registers
     // P0 generator
@@ -208,7 +210,8 @@ module vr0_render (
     wire p1_miss, p2_miss;
     wire seg_hold;                    // P5 cannot accept (segment switch in progress)
     wire p5_hazard;                   // P5 blend pixel whose destination is still being written by P6/P7
-    wire stall = p1_miss || p2_miss || seg_hold || p5_hazard;
+    wire p2_wait;                     // P2W tag copy is being refreshed after a texel tag/valid write
+    wire stall = p1_miss || p2_miss || p2_wait || seg_hold || p5_hazard;
 
     // ---- RAM output hold: the RAM outputs belong to the pixels one stage further on. On the first clock of a
     //      stall they are captured and the captured values are used until the pipeline advances, so a cache
@@ -263,7 +266,28 @@ module vr0_render (
     reg  [21:0] p2w_word;
     reg   [1:0] p2w_lane;
     wire [6:0]  p2_line = p2w_word[10:4];
-    assign p2_miss = p2w_v && !p2w_skip && q_tex && !(tc_val[p2_line] && tc_tag[p2_line] == p2w_word[21:11]);
+    // The tag entry of the P2W pixel is looked up one clock early and registered (timing): both the entry for
+    // the pixel entering P2W (p2_word) and for the one held there (p2w_word) are read, the stall picks. A write to
+    // the texel tags/valid bits makes the copy stale for one clock (the pixel waits while it is re-read).
+    reg  [10:0] p2w_tt;
+    reg         p2w_tv, p2w_stale;
+    wire [6:0]  p2_line_in = p2_word[10:4];
+    wire        p2w_hit = p2w_tv && p2w_tt == p2w_word[21:11];
+    wire        p2w_need = p2w_v && !p2w_skip && q_tex;
+    assign p2_wait = p2w_need && p2w_stale;
+    assign p2_miss = p2w_need && !p2w_stale && !p2w_hit;
+    wire tc_fill_start = rst == R_FILL && !filling && p2_miss && !t_req;
+    wire tc_fill_end   = rst == R_FILL && filling && fill_fin == 2'd1 && !fill_tt;
+    always @(posedge clk) begin
+        if (!stall || rst != R_FILL) begin
+            p2w_tt <= tc_tag[p2_line_in];
+            p2w_tv <= tc_val[p2_line_in];
+        end else begin
+            p2w_tt <= tc_tag[p2_line];
+            p2w_tv <= tc_val[p2_line];
+        end
+        p2w_stale <= !rst_n || tc_fill_start || tc_fill_end || snoop_q;
+    end
 
     // ---- P3: texel extract -> palette index; P4: colour ----------------------------------------
     reg  [7:0] p3_pidx;
@@ -341,8 +365,6 @@ module vr0_render (
 
     // ------------------------------------------------------------------ main sequencer
     integer i;
-    reg        snoop_q;
-    reg [21:4] snoop_a;
     always @(posedge clk) begin
         done   <= 1'b0;
         pal_we <= 1'b0;

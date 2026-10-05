@@ -144,7 +144,7 @@ module se3208_cpu (
     // ------------------------------------------------------------------ control state
     typedef enum logic [4:0] {
         S_RESET0, S_RESET1, S_FETCH, S_FETCHW, S_DECODE, S_EXEC, S_MUL,
-        S_MEM, S_MEMW, S_LOADWB, S_STACK, S_DONE, S_IRQ0, S_IRQ1, S_IRQ2, S_HALTED
+        S_MEM, S_MEMW, S_LOADWB, S_STACK, S_DONE, S_IRQ0, S_IRQ1, S_IRQ2, S_HALTED, S_SHIFT
     } st_t;
     st_t st;
     assign dbg_state = st;
@@ -273,6 +273,9 @@ module se3208_cpu (
     reg  [63:0] mul_p;
     always @(posedge clk) mul_p <= mul_a * mul_b;
     reg  [1:0]  mul_cnt;
+    // shifts take two clocks (timing): operands registered in EXEC, shift and write-back in S_SHIFT
+    reg  [31:0] sh_val;
+    reg   [4:0] sh_by;
 
     // lane helpers
     function automatic [3:0] be_of(input [1:0] a, input [2:0] size);
@@ -535,17 +538,20 @@ module se3208_cpu (
                 end
                 O_HALT, O_MVTC, O_MVFC: ;
                 O_ASR, O_LSR, O_ASL: begin
-                    logic [33:0] t;
-                    logic [4:0] by;
-                    logic [1:0] kind;
-                    by   = ir[10] ? R[ir[7:5]][4:0] : ir[9:5];
-                    kind = (op == O_ASR) ? 2'd0 : (op == O_LSR) ? 2'd1 : 2'd2;
-                    t    = shifter(kind, R[f_d0], by);
-                    R[f_d0] <= t[31:0];
-                    SR <= arith_sr(SR, t[31:0], t[33], 1'b0) & ~F_E;
+                    sh_by  <= ir[10] ? R[ir[7:5]][4:0] : ir[9:5];
+                    sh_val <= R[f_d0];
+                    st     <= S_SHIFT;
                 end
                 default: illegal <= 1'b1;
                 endcase
+            end
+
+            S_SHIFT: begin
+                logic [33:0] t;
+                t = shifter((op == O_ASR) ? 2'd0 : (op == O_LSR) ? 2'd1 : 2'd2, sh_val, sh_by);
+                R[f_d0] <= t[31:0];
+                SR <= arith_sr(SR, t[31:0], t[33], 1'b0) & ~F_E;
+                st <= S_DONE;
             end
 
             S_MUL: begin
