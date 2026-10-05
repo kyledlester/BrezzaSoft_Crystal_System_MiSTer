@@ -78,6 +78,14 @@ module crystal_board (
     input  wire [23:0] tex_snoop_addr,
     output wire [31:0] dbg_render_pixels,
     output wire [15:0] dbg_flip_defer,
+    // display-list queue front through the ordered texture-write queue (crystal_texq, in crystal_core)
+    output wire        vq_front_wr,
+    output wire [15:0] vq_front_wr_val,
+    input  wire        vq_front_set,
+    input  wire [15:0] vq_front_set_val,
+    input  wire        vq_empty,
+    output wire        vq_drain_ok,
+    output wire [31:0] dbg_defer_state,
 
     // video timing / scanout control
     output wire        ce_pix,
@@ -427,7 +435,9 @@ module crystal_board (
         .vblank_start(vblank_start), .vblank_irq(vid_vblank_irq),
         .pkt_start(pkt_start), .pkt_addr(pkt_addr), .pkt_done(pkt_done), .pkt_flip(pkt_flip),
         .draw_dest(draw_dest), .display_dest(display_dest), .dither_mode(), .min_interval(render_interval),
-        .dbg_flip_defer(dbg_flip_defer)
+        .dbg_flip_defer(dbg_flip_defer), .dbg_defer_state(dbg_defer_state),
+        .front_wr(vq_front_wr), .front_wr_val(vq_front_wr_val), .front_set(vq_front_set), .front_set_val(vq_front_set_val),
+        .texq_empty(vq_empty), .drain_ok(vq_drain_ok)
     );
 
     vr0_render render (

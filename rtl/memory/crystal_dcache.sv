@@ -23,6 +23,8 @@ module crystal_dcache (
 
     output reg         inv,
     output reg  [24:0] inv_addr,
+    output reg         wr_done,       // pulse: a synchronous (texture / frame RAM) write reached the SDRAM
+    output reg  [24:0] wr_done_addr,  //   (its last word was issued), for the renderer's texture-cache snoop
     output wire        wb_busy,
 
     // SDRAM client
@@ -121,6 +123,7 @@ module crystal_dcache (
     always @(posedge clk) begin
         ack_r <= 1'b0;
         inv   <= 1'b0;
+        wr_done <= 1'b0;
         if (rst_n) f_cnt <= f_cnt + (f_push ? 4'd1 : 4'd0) - (f_pop ? 4'd1 : 4'd0);
         if (!rst_n) begin
             st <= S_CLR; clr_i <= 9'd0;
@@ -243,7 +246,10 @@ module crystal_dcache (
                 end
                 if (ms == 2'd3) begin
                     if (m_wnext) mw_hi <= 1'b1;
-                    if (m_done) begin m_req <= 1'b0; ms <= 2'd0; ack_r <= 1'b1; st <= S_IDLE; end
+                    if (m_done) begin
+                        m_req <= 1'b0; ms <= 2'd0; ack_r <= 1'b1; st <= S_IDLE;
+                        wr_done <= 1'b1; wr_done_addr <= a_q;
+                    end
                 end
             end
             default: st <= S_IDLE;

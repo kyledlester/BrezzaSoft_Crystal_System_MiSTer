@@ -66,6 +66,8 @@ module crystal_core (
     output wire  [4:0] dbg_cpu_state,
     output wire [31:0] dbg_render_pixels,
     output wire [15:0] dbg_flip_defer,
+    output wire [31:0] dbg_defer_state,
+    output wire [15:0] dbg_texq_max,
     output wire        vb_next,          // vertical blank of the next raster line (CRT Adjust)
     output wire        dbg_d_ack,
     output wire        dbg_d_we,
@@ -157,6 +159,11 @@ module crystal_core (
     wire [31:0] md_wdata, md_rdata;
     wire [22:0] display_dest;
     wire        crt_blank;
+    wire [24:0] dc_inv_addr;
+    wire        dc_wr_done;
+    wire        vq_front_wr, vq_front_set, vq_empty, vq_drain_ok;
+    wire [15:0] vq_front_wr_val, vq_front_set_val;
+    wire [24:0] dc_wr_done_addr;
     wire [9:0]  hcnt, vcnt;
     // vertical blank of the line after the current one (CRT Adjust samples it after the HSync, see crystal_crt_adjust)
     assign vb_next = (vcnt == g_vtot - 10'd1) ? 1'b0 : (vcnt >= g_vdisp - 10'd1);
@@ -175,10 +182,12 @@ module crystal_core (
         .v_rdata(sd_rdata),
         .vw_req(vw_req), .vw_addr(vw_addr), .vw_len(vw_len), .vw_wdata(vw_wdata), .vw_wbe(vw_wbe),
         .vw_wnext(c_wnext[6]), .vw_done(c_done[6]),
-        .tex_snoop(da_inv && dc_inv_addr[24:23] == 2'b01), .tex_snoop_addr(dc_inv_addr[24:1]),
+        .tex_snoop(dc_wr_done && dc_wr_done_addr[24:23] == 2'b01), .tex_snoop_addr(dc_wr_done_addr[24:1]),
         .ss_req(ss_req), .ss_addr(ss_addr), .ss_len(ss_len), .ss_rvalid(c_rvalid[1]), .ss_rdata(sd_rdata), .ss_done(c_done[1]),
         .audio_l(audio_l), .audio_r(audio_r),
         .dbg_render_pixels(dbg_render_pixels), .dbg_flip_defer(dbg_flip_defer),
+        .vq_front_wr(vq_front_wr), .vq_front_wr_val(vq_front_wr_val), .vq_front_set(vq_front_set),
+        .vq_front_set_val(vq_front_set_val), .vq_empty(vq_empty), .vq_drain_ok(vq_drain_ok), .dbg_defer_state(dbg_defer_state),
         .ce_pix(ce_pix), .hcnt(hcnt), .vcnt(vcnt), .hblank(hb0), .vblank(vb0), .hsync(hs0), .vsync(vs0),
         .display_dest(display_dest), .crt_blank(crt_blank),
         .geo_hdisp(g_hdisp), .geo_vdisp(g_vdisp), .geo_vtot(g_vtot),
@@ -282,18 +291,31 @@ module crystal_core (
     // ---- data port: D-cache + posted writes (CPU/DMA)
     wire        dc_ack, wb_busy;
     wire [31:0] dc_rdata;
-    wire [24:0] dc_inv_addr;
+    // ordered texture-RAM write queue in front of the D-cache (crystal_texq: why and how there)
+    wire        tq_req, tq_we, sd_ack;
+    wire [24:0] tq_addr;
+    wire  [3:0] tq_be;
+    wire [31:0] tq_wdata;
     crystal_dcache dcache (
         .clk(clk_sys), .rst_n(board_rst_n),
-        .req(md_req && !md_addr[27] && !nv_sel), .we(md_we), .addr(md_addr[24:0]), .be(md_be), .wdata(md_wdata),
+        .req(tq_req), .we(tq_we), .addr(tq_addr), .be(tq_be), .wdata(tq_wdata),
         .ack(dc_ack), .rdata(dc_rdata),
         .inv(da_inv), .inv_addr(dc_inv_addr), .wb_busy(wb_busy),
+        .wr_done(dc_wr_done), .wr_done_addr(dc_wr_done_addr),
         .m_req(da_req), .m_we(da_we), .m_addr(da_addr), .m_len(da_len), .m_wdata(da_wdata16), .m_wbe(da_wbe2),
         .m_wnext(c_wnext[3]), .m_rvalid(c_rvalid[3]), .m_rdata(sd_rdata), .m_done(c_done[3])
     );
     // flash writes (outside the command dword, handled by the board) are ignored: ack immediately
     // NVRAM (block RAM, persistent through MiSTer): SDRAM-space alias 0x1820000-0x182FFFF
     wire        nv_sel = !md_addr[27] && md_addr[24:16] == 9'h182;
+    crystal_texq texq (
+        .clk(clk_sys), .rst_n(board_rst_n),
+        .c_req(md_req && !md_addr[27] && !nv_sel), .c_we(md_we), .c_addr(md_addr[24:0]), .c_be(md_be), .c_wdata(md_wdata),
+        .c_ack(sd_ack),
+        .d_req(tq_req), .d_we(tq_we), .d_addr(tq_addr), .d_be(tq_be), .d_wdata(tq_wdata), .d_ack(dc_ack),
+        .front_wr(vq_front_wr), .front_wr_val(vq_front_wr_val), .front_set(vq_front_set), .front_set_val(vq_front_set_val),
+        .drain_ok(vq_drain_ok), .empty(vq_empty), .max_used(dbg_texq_max)
+    );
     wire        nv_ack;
     wire [31:0] nv_rdata;
     crystal_nvram nvram (
@@ -304,7 +326,7 @@ module crystal_core (
         .ioctl_rd(ioctl_rd), .ioctl_addr(ioctl_addr), .ioctl_dout(ioctl_dout), .ioctl_din(ioctl_din),
         .ioctl_wait(nv_wait), .upload_req(ioctl_upload_req)
     );
-    assign md_ack   = md_addr[27] ? (md_we ? md_req : fr0_ack) : nv_sel ? nv_ack : dc_ack;
+    assign md_ack   = md_addr[27] ? (md_we ? md_req : fr0_ack) : nv_sel ? nv_ack : sd_ack;
     assign md_rdata = md_addr[27] ? fr0_data : nv_sel ? nv_rdata : dc_rdata;
 
     // ------------------------------------------------------------------ scanout

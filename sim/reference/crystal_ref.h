@@ -49,6 +49,7 @@ struct Hooks {
     std::function<void(int16_t l, int16_t r)> sample;
     std::function<void(uint32_t addr, int size, uint32_t data)> ram_write;          // CPU/DMA writes to RAM regions
     std::function<void(uint32_t ptr)> before_packet;                                 // just before process_packet
+    std::function<void(uint32_t byte_addr)> tex_read;                                // renderer texture-RAM read (analysis)
 };
 
 class Board {

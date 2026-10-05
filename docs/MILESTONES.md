@@ -86,4 +86,17 @@ tag lookups, per-client SDRAM timing flags, single-adder ALU, two-clock shifts, 
 pipelined timer start, two-clock envelope/mix) -- all benches re-run identical after each change.
 RBF: `Releases/Crystal_YYYYMMDD.rbf`; MRA: `mra/The Crystal of Kings.mra`. Procedure: docs/HARDWARE_TEST_1.md.
 
+### Hardware test 1 (owner, 128 MB SDRAM, 15-kHz CRT) and fixes
+
+Result: boot, attract, coin/start, gameplay, controls and sound work. Findings and fixes (build 2026-10-05):
+* CRT lost sync during the MiSTer loading screen -> the raster runs on its own reset through ROM download/reset.
+* Moving sprites jittered, lines flashed around animations -> reproduced in simulation by comparing the full core
+  frame by frame with the reference model over the How-to-Play demo (`scripts/sim/frame_compare.py`): the tested
+  RTL differs on **86 of 361 frames** (sprites drawn with a mix of neighbouring animation poses); fixed RTL:
+  **361 of 361 identical**. Causes: flips at vblank before the renderer finished the list, and in-place texture
+  uploads overtaking the renderer. Fixes: flip waits for the renderer (K17), ordered texture-write queue (K19),
+  texture snoop at write completion, double-buffered segment write-back (renderer 2.42 -> 1.32 clk/pixel).
+* CRT Adjust added (NA/NB menu and bits; `scripts/sim/crt_test.sh` 1,182 checks PASS).
+Quartus: timing met, clk_sys +0.556 ns, HDMI +0.449 ns, SDRAM_CLK +2.617 ns; 189 / 553 RAM blocks.
+
 ## M23–M28 — TODO (after hardware feedback)

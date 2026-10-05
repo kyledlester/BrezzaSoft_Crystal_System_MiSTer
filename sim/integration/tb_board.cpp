@@ -266,6 +266,8 @@ int main(int argc, char **argv)
             if (io_trace && (a.addr >= 0x01200000 && a.addr < 0x02000000 || a.addr >= 0x03000000 && a.addr < 0x03010000 || a.addr >= 0x04800000 && a.addr < 0x05000000))
                 printf("IO %c %08x/%d %08x  insn %llu frame %llu cyc %llu\n", a.we ? 'W' : 'R', a.addr, a.size, a.data, (unsigned long long)insns, (unsigned long long)frames, (unsigned long long)cycles);
         }
+        // no ordered texture-write queue at board level: queue-front updates apply one clock later
+        top->vq_front_set = top->vq_front_wr; top->vq_front_set_val = top->vq_front_wr_val; top->vq_empty = 1;
         top->clk = 1;
         top->eval();
         if (pi.wait >= 0) { if (top->mi_ack) pi.wait = -1; else pi.wait--; }

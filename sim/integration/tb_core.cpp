@@ -212,6 +212,15 @@ int main(int argc, char **argv)
             }
         }
         st_hist[t->dbg_cpu_state & 31]++;
+        {
+            static unsigned last_defer = 0;
+            if (t->dbg_flip_defer != last_defer) {
+                last_defer = t->dbg_flip_defer;
+                uint32_t s = t->dbg_defer_state;
+                printf("DEFER %u frame %d: flip_sync %u busy %u flip_cnt %u q_rear %03x q_front %03x\n", last_defer, frame,
+                       s >> 31, (s >> 30) & 1, (s >> 22) & 3, (s >> 11) & 0x7ff, s & 0x7ff);
+            }
+        }
         if (fw && cyc % 1944 == 0) {   // one output sample per 1944 clk_sys (44.19 kHz)
             int16_t s2[2] = {(int16_t)t->audio_l, (int16_t)t->audio_r};
             fwrite(s2, 2, 2, fw);
@@ -251,9 +260,9 @@ int main(int argc, char **argv)
                 }
                 if (frame % 30 == 0 || frame - last_report >= 30) {
                     last_report = frame;
-                    printf("frame %d cycle %llu retired %llu pc %08x underflows %u sdram_viol %llu flip_defer %u\n", frame,
+                    printf("frame %d cycle %llu retired %llu pc %08x underflows %u sdram_viol %llu flip_defer %u texq_max %u\n", frame,
                            (unsigned long long)cyc, (unsigned long long)retired, t->dbg_pc, t->dbg_underflows,
-                           (unsigned long long)sd.violations, (unsigned)t->dbg_flip_defer);
+                           (unsigned long long)sd.violations, (unsigned)t->dbg_flip_defer, (unsigned)t->dbg_texq_max);
                     fflush(stdout);
                 }
             }

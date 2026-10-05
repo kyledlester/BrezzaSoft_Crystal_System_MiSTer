@@ -18,6 +18,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_nvram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_ds1302.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_raster.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_board.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_texq.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/vendor/crt_adjust.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/crystal/crystal_crt_adjust.sv

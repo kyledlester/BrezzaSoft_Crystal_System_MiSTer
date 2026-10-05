@@ -27,9 +27,19 @@ module vr0_video_regs (
     output wire [22:0] display_dest,   // frame-RAM byte address of the displayed buffer
     output wire  [1:0] dither_mode,
     input  wire [15:0] min_interval,   // minimum clocks between packet starts (MAME: 1100)
-    output reg  [15:0] dbg_flip_defer  // vblanks whose flip waited for the renderer (statistics)
+    output reg  [15:0] dbg_flip_defer, // vblanks whose flip waited for the renderer (statistics)
+    output reg  [31:0] dbg_defer_state,// at the last deferral: {flip_sync, busy, 6'd0, flip_cnt[1:0], q_rear, q_front}
+
+    // ordered texture-write queue (crystal_texq): the CPU's queue-front writes reach the renderer through it
+    output reg         front_wr,       // pulse: the CPU wrote the queue front (merged value)
+    output reg  [15:0] front_wr_val,
+    input  wire        front_set,      // pulse: make that front visible to the renderer
+    input  wire [15:0] front_set_val,
+    input  wire        texq_empty,     // no texture write / front update pending
+    output wire        drain_ok        // the renderer has caught up with the front it sees
 );
-    reg  [15:0] q_front;
+    reg  [15:0] q_front;               // as seen by the renderer
+    reg  [15:0] cpu_front;             // as written / read by the CPU
     reg  [10:0] q_rear;
     reg         bank1_sel, draw_sel, r_reset, r_start, flip_sync;
     reg         disp_bank;
@@ -50,18 +60,23 @@ module vr0_video_regs (
 
     wire [15:0] off_lo = {io_addr[13:0], 2'b00};      // byte offset of lane 0
     wire        wr = io_sel && io_we;
-    wire        caught_up = flip_sync || (!busy && q_rear == q_front[10:0]);
+    wire        caught_up = flip_sync || (!busy && q_rear == q_front[10:0] && texq_empty);
+    assign drain_ok = !r_start || flip_sync || (!busy && q_rear == q_front[10:0]);
 
     // 16-bit register write (one lane)
     task automatic w16(input [15:0] off, input [15:0] d, input [1:0] m);
         case (off)
-            16'h0080: q_front <= {m[1] ? d[15:8] : q_front[15:8], m[0] ? d[7:0] : q_front[7:0]};
+            16'h0080: begin
+                cpu_front    <= {m[1] ? d[15:8] : cpu_front[15:8], m[0] ? d[7:0] : cpu_front[7:0]};
+                front_wr     <= 1'b1;
+                front_wr_val <= {m[1] ? d[15:8] : cpu_front[15:8], m[0] ? d[7:0] : cpu_front[7:0]};
+            end
             16'h008c: if (m[0]) begin
                 draw_sel <= d[7];
                 r_reset  <= d[3];
                 r_start  <= d[2];
                 dither   <= d[1:0];
-                if (d[3]) begin q_front <= 16'd0; q_rear <= 11'd0; end
+                if (d[3]) begin q_front <= 16'd0; cpu_front <= 16'd0; q_rear <= 11'd0; end
             end
             16'h0090: bank1_sel <= d[15];
             16'h00a6: if (m[0]) begin
@@ -73,7 +88,7 @@ module vr0_video_regs (
     endtask
     function automatic [15:0] r16(input [15:0] off);
         case (off)
-            16'h0080: return {5'd0, q_front[10:0]};
+            16'h0080: return {5'd0, cpu_front[10:0]};
             16'h0082: return {5'd0, q_rear};
             16'h008c: return {8'd0, draw_sel, 3'd0, r_reset, r_start, dither};
             16'h008e: return {15'd0, disp_bank};
@@ -85,8 +100,9 @@ module vr0_video_regs (
 
     always @(posedge clk) begin
         pkt_start <= 1'b0;
+        front_wr  <= 1'b0;
         if (!rst_n) begin
-            q_front <= 16'd0; q_rear <= 11'd0;
+            q_front <= 16'd0; cpu_front <= 16'd0; q_rear <= 11'd0;
             bank1_sel <= 1'b0; draw_sel <= 1'b0; r_reset <= 1'b0; r_start <= 1'b0; flip_sync <= 1'b0;
             disp_bank <= 1'b0; dither <= 2'd0; flip_cnt <= 8'd0;
             draw_d <= 23'd0; disp_d <= 23'd0;
@@ -94,6 +110,7 @@ module vr0_video_regs (
             dbg_flip_defer <= 16'd0;
         end else begin
             if (gap != 16'd0) gap <= gap - 16'd1;
+            if (front_set) q_front <= front_set_val;
 
             // packet completion (MAME pipeline_cb after process_packet)
             if (busy && pkt_done) begin
@@ -115,8 +132,10 @@ module vr0_video_regs (
             // until the renderer has caught up with the list -- stopped at the flip-sync packet, or idle with an
             // empty queue (the chip's flip-sync behaviour). A late frame is then shown one frame later instead of
             // half drawn.
-            if (vblank_start && r_start && flip_cnt != 8'd0 && !caught_up)
-                dbg_flip_defer <= dbg_flip_defer + 16'd1;
+            if (vblank_start && r_start && flip_cnt != 8'd0 && !caught_up) begin
+                dbg_flip_defer  <= dbg_flip_defer + 16'd1;
+                dbg_defer_state <= {flip_sync, busy, 6'd0, flip_cnt[1:0], q_rear, q_front[10:0]};
+            end
             if (vblank_start && r_start && flip_cnt != 8'd0 && caught_up) begin
                 draw_d    <= draw_sel ? front : back;
                 disp_d    <= front;

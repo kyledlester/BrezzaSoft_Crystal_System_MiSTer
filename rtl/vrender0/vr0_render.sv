@@ -602,12 +602,13 @@ module vr0_render (
                         fill_fin <= fill_fin - 2'd1;
                         if (fill_fin == 2'd1) begin
                             filling <= 1'b0;
+                            // a snoop of this line in the completing clock counts as well
                             if (fill_tt) begin
                                 tt_tag[fill_wa[9:4]] <= fill_wa[21:10];
-                                tt_val[fill_wa[9:4]] <= !fill_dirty;
+                                tt_val[fill_wa[9:4]] <= !fill_dirty && !(snoop_q && snoop_a == fill_wa[21:4]);
                             end else begin
                                 tc_tag[fill_wa[10:4]] <= fill_wa[21:11];
-                                tc_val[fill_wa[10:4]] <= !fill_dirty;
+                                tc_val[fill_wa[10:4]] <= !fill_dirty && !(snoop_q && snoop_a == fill_wa[21:4]);
                             end
                         end
                     end

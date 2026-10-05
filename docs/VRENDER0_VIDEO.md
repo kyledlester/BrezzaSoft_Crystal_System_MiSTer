@@ -63,6 +63,16 @@ buffer whose undrawn parts still hold the frame from two flips ago: moving sprit
 partial sprites flash. With the rule a late frame is shown one vblank later instead, which is what the chip's
 flip-sync mechanism exists for. `dbg_flip_defer` counts the deferred vblanks (core simulation).
 
+**Texture writes vs. the display list (crystal_texq):** crysking rewrites sprite animation textures in place right
+after submitting a display list (`sim/reference/tex_race.cpp`: up to ~500 rewritten texture lines per frame in the
+How-to-Play fights, every few frames). MAME has drawn that list by then; the RTL renderer may still be drawing it.
+CPU/DMA texture-RAM writes and the CPU's queue-front updates therefore go through one ordered queue in front of
+the D-cache: a texture write reaches SDRAM only when the renderer has caught up with the front it sees (idle with
+an empty queue, stopped at a flip-sync packet, or not started), and a front update reaches the renderer only after
+the writes queued before it. The CPU is not held up (writes are acknowledged when queued; it waits only on a full
+queue, 2,048 entries, or on a texture-RAM read with writes pending). The flip rule above also requires the queue to
+be empty. Texture writes are snooped into the renderer's caches when they complete in SDRAM.
+
 **Renderer throughput:** the destination is written in 32-pixel segments; a finished segment is copied into a
 write-back buffer in one clock and written to SDRAM from there while drawing continues in the next segment.
 Measured with the renderer bench (attract, 2..7-clock memory latency): 2.42 -> 1.32 clocks per pixel; the

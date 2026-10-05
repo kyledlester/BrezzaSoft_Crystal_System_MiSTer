@@ -539,6 +539,7 @@ int Board::process_packet(uint32_t ptr)
                     uint32_t offset;
                     if (tiled) {
                         uint32_t index = tex16(q.tile + (((ty >> 3) * w + (tx >> 3)) << 1));
+                        if (hooks.tex_read) hooks.tex_read(q.tile + (((ty >> 3) * w + (tx >> 3)) << 1));
                         st.tile_reads++;
                         if (index == 0) continue;
                         offset = (index << 6) + ((ty & 7) << 3) + (tx & 7);
@@ -546,6 +547,8 @@ int Board::process_packet(uint32_t ptr)
                         offset = ty * q.twidth + tx;
                     uint16_t color;
                     st.texel_reads++;
+                    if (hooks.tex_read)
+                        hooks.tex_read(bpp == 4 ? q.texaddr + (offset >> 1) : bpp == 8 ? q.texaddr + offset : q.texaddr + (offset << 1));
                     if (bpp == 4) {
                         uint8_t texel = tex8(q.texaddr + (offset >> 1));
                         color = q.pal[(texel >> ((~offset & 1) << 2)) & 0xf];
