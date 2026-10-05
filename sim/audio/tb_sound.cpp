@@ -73,9 +73,25 @@ int main(int argc, char **argv)
     };
     // the renderer writes frame RAM without going through write(): mirror it at every packet boundary is too
     // costly, so samples are assumed not to live in drawn areas (crysking keeps them in frame RAM above 0x200000)
-    uint64_t reg_writes = 0;
+    uint64_t reg_writes = 0, fails = 0;
     b.hooks.io_access = [&](uint32_t addr, int size, uint32_t data, bool wr) {
-        if (!wr || addr < 0x04800000 || addr >= 0x04801000) return;
+        if (addr < 0x04800000 || addr >= 0x04801000) return;
+        if (!wr) {
+            // replay the read on the RTL register file (same timing as crystal_board: sel, wait, sample)
+            uint32_t sh = (addr & 3) * 8;
+            uint32_t m = size == 4 ? 0xf : size == 2 ? (0x3u << (addr & 3)) : (0x1u << (addr & 3));
+            t->io_sel = 1; t->io_we = 0; t->io_addr = (addr & 0xfff) >> 2; t->io_be = m;
+            tick();
+            t->io_sel = 0;
+            uint32_t got = (t->io_rdata >> sh) & (size == 4 ? 0xffffffffu : ((1u << (8 * size)) - 1));
+            tick();
+            if (got != data) {
+                static int bad = 0;
+                if (bad++ < 10) printf("REGISTER READ MISMATCH %08x/%d: ref %08x rtl %08x (frame %d)\n", addr, size, data, got, b.frame);
+                fails++;
+            }
+            return;
+        }
         uint32_t sh = (addr & 3) * 8;
         uint32_t m = size == 4 ? 0xf : size == 2 ? (0x3u << (addr & 3)) : (0x1u << (addr & 3));
         t->io_sel = 1; t->io_we = 1; t->io_addr = (addr & 0xfff) >> 2; t->io_be = m; t->io_wdata = data << sh;
@@ -84,7 +100,7 @@ int main(int argc, char **argv)
         tick(); tick();
         reg_writes++;
     };
-    uint64_t samples = 0, nonzero = 0, fails = 0;
+    uint64_t samples = 0, nonzero = 0;
     FILE *fw = wav.empty() ? nullptr : fopen(wav.c_str(), "wb");
     if (fw) { uint8_t h[44] = {}; fwrite(h, 1, 44, fw); }
     b.hooks.sample = [&](int16_t l, int16_t r) {

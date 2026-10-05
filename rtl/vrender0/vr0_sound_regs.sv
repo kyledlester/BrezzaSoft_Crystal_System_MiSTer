@@ -14,11 +14,11 @@ module vr0_sound_regs (
     input  wire [9:0]  io_addr,        // dword index within 0x04800000-0x04800FFF
     input  wire  [3:0] io_be,
     input  wire [31:0] io_wdata,
-    output reg  [31:0] io_rdata,
+    output wire [31:0] io_rdata,       // valid two clocks after io_sel (board B_IOR)
 
     // engine access to channel words (address = channel*16 + word)
     input  wire  [8:0] eng_addr,
-    output reg  [15:0] eng_rdata,
+    output wire [15:0] eng_rdata,
     input  wire        eng_we,
     input  wire [15:0] eng_wdata,
 
@@ -35,8 +35,9 @@ module vr0_sound_regs (
     output reg  [31:0] touched,         // CPU wrote CurSAddr/EnvVol words (0-3) of channel n
     input  wire [31:0] touch_clr
 );
-    // channel RAM, 16-bit words, MAME channel_t::read layout stored as the read-back value
-    reg [15:0] chram [0:511];
+    // Channel registers: 32 channels x 16 words stored as the MAME channel_t::read() image, in block RAM:
+    // even and odd words in separate RAMs (a dword-aligned CPU access touches one of each), each split into
+    // byte lanes; port A = CPU, port B = sample engine (and the reset-time default fill).
     reg [15:0] rev_factor, buf_addr;
     reg [15:0] buf_size [0:3];
 
@@ -52,7 +53,6 @@ module vr0_sound_regs (
         endcase
     endfunction
 
-    reg  [15:0] rd_lo, rd_hi;
     wire [11:0] off_lo = {io_addr, 2'b00};
     wire        wr = io_sel && io_we;
     assign irq_clear = 1'b0;
@@ -127,12 +127,11 @@ module vr0_sound_regs (
             int_pend <= int_pend | eng_pend_set;
             if (pend_hi) begin
                 pend_hi <= 1'b0;
-                if (pend_hi_off < 12'h400) ;   // channel words handled in the RAM process
-                else creg_w(pend_hi_off, pend_hi_d, pend_hi_m);
+                creg_w(pend_hi_off, pend_hi_d, pend_hi_m);
             end
             if (wr) begin
                 if (io_be[1:0] != 2'b00 && off_lo >= 12'h400) creg_w(off_lo, io_wdata[15:0], io_be[1:0]);
-                if (io_be[3:2] != 2'b00) begin
+                if (io_be[3:2] != 2'b00 && off_lo >= 12'h400) begin
                     pend_hi     <= 1'b1;
                     pend_hi_off <= off_lo + 12'd2;
                     pend_hi_d   <= io_wdata[31:16];
@@ -142,42 +141,67 @@ module vr0_sound_regs (
         end
     end
 
-    // channel RAM: CPU writes (lane 0 now, lane 1 next cycle), engine port
+    // ------------------------------------------------------------------ channel RAM (block RAM)
+    // reset-time fill with MAME's channel_t defaults (word 3 = 0x7100: ld = 1, env_stage = 1)
+    reg  [9:0] init_i;
+    wire       init_busy = !init_i[9];
+    always @(posedge clk) begin
+        if (!rst_n) init_i <= 10'd0;
+        else if (init_busy) init_i <= init_i + 10'd1;
+    end
+    wire        ch_wr  = wr && off_lo < 12'h400;
+    wire  [7:0] a_pair = io_addr[7:0];                     // {channel, word[3:1]}
+    wire [15:0] a_even = wfix({a_pair[2:0], 1'b0}, io_wdata[15:0]);
+    wire [15:0] a_odd  = wfix({a_pair[2:0], 1'b1}, io_wdata[31:16]);
+    wire  [8:0] b_word = init_busy ? init_i[8:0] : eng_addr;
+    wire [15:0] b_data = init_busy ? ((init_i[3:0] == 4'd3) ? 16'h7100 : 16'h0000) : eng_wdata;
+    wire        b_we   = init_busy || eng_we;
+    wire [15:0] qa_even, qa_odd, qb_even, qb_odd;
+    crystal_tdpram #(.AW(8), .DW(8)) r_el (.clk(clk),
+        .a_we(ch_wr && io_be[0]), .a_addr(a_pair), .a_wdata(a_even[7:0]),  .a_rdata(qa_even[7:0]),
+        .b_we(b_we && !b_word[0]), .b_addr(b_word[8:1]), .b_wdata(b_data[7:0]), .b_rdata(qb_even[7:0]));
+    crystal_tdpram #(.AW(8), .DW(8)) r_eh (.clk(clk),
+        .a_we(ch_wr && io_be[1]), .a_addr(a_pair), .a_wdata(a_even[15:8]), .a_rdata(qa_even[15:8]),
+        .b_we(b_we && !b_word[0]), .b_addr(b_word[8:1]), .b_wdata(b_data[15:8]), .b_rdata(qb_even[15:8]));
+    crystal_tdpram #(.AW(8), .DW(8)) r_ol (.clk(clk),
+        .a_we(ch_wr && io_be[2]), .a_addr(a_pair), .a_wdata(a_odd[7:0]),   .a_rdata(qa_odd[7:0]),
+        .b_we(b_we && b_word[0]), .b_addr(b_word[8:1]), .b_wdata(b_data[7:0]), .b_rdata(qb_odd[7:0]));
+    crystal_tdpram #(.AW(8), .DW(8)) r_oh (.clk(clk),
+        .a_we(ch_wr && io_be[3]), .a_addr(a_pair), .a_wdata(a_odd[15:8]),  .a_rdata(qa_odd[15:8]),
+        .b_we(b_we && b_word[0]), .b_addr(b_word[8:1]), .b_wdata(b_data[15:8]), .b_rdata(qb_odd[15:8]));
+    reg b_par;
+    always @(posedge clk) b_par <= eng_addr[0];
+    assign eng_rdata = b_par ? qb_odd : qb_even;
+
+    // touched: CPU wrote CurSAddr/EnvVol (words 0-3) of a channel
     always @(posedge clk) begin
         logic [31:0] t;
         t = touched & ~touch_clr;
-        if (wr && io_be[1:0] != 2'b00 && off_lo < 12'h400 && off_lo[4:3] == 2'b00) t[off_lo[9:5]] = 1'b1;
-        if (pend_hi && pend_hi_off < 12'h400 && pend_hi_off[4:3] == 2'b00) t[pend_hi_off[9:5]] = 1'b1;
+        if (ch_wr && off_lo[4:3] == 2'b00) t[off_lo[9:5]] = 1'b1;
         touched <= rst_n ? t : 32'd0;
     end
-    always @(posedge clk) begin
-        if (wr && io_be[1:0] != 2'b00 && off_lo < 12'h400) begin
-            logic [8:0] a;
-            logic [15:0] mm, nv;
-            a  = off_lo[9:1];
-            mm = {{8{io_be[1]}}, {8{io_be[0]}}};
-            nv = (chram[a] & ~mm) | (io_wdata[15:0] & mm);
-            chram[a] <= wfix(a[3:0], nv);
-        end else if (pend_hi && pend_hi_off < 12'h400) begin
-            logic [8:0] a;
-            logic [15:0] mm, nv;
-            a  = pend_hi_off[9:1];
-            mm = {{8{pend_hi_m[1]}}, {8{pend_hi_m[0]}}};
-            nv = (chram[a] & ~mm) | (pend_hi_d & mm);
-            chram[a] <= wfix(a[3:0], nv);
-        end else if (eng_we)
-            chram[eng_addr] <= eng_wdata;
-        eng_rdata <= chram[eng_addr];
-    end
 
-    initial for (i = 0; i < 512; i++) chram[i] = (i % 16 == 3) ? 16'h7100 : 16'h0000;   // MAME defaults: ld = 1, env_stage = 1
-
-    // CPU reads (registered)
+    // ------------------------------------------------------------------ CPU reads
+    // channel words come straight from the RAM outputs (address presented while io_sel is high); the control
+    // registers are registered at the same time
+    reg        rd_ch;
+    reg  [3:0] rd_be;
+    reg [31:0] rd_ctl;
     always @(posedge clk) begin
         if (io_sel && !io_we) begin
-            rd_lo = (off_lo < 12'h400) ? chram[off_lo[9:1]] : creg_r(off_lo);
-            rd_hi = (off_lo < 12'h400) ? chram[off_lo[9:1] + 9'd1] : creg_r(off_lo + 12'd2);
-            io_rdata <= {io_be[3:2] != 2'b00 ? rd_hi : 16'd0, io_be[1:0] != 2'b00 ? rd_lo : 16'd0};
+            rd_ch  <= off_lo < 12'h400;
+            rd_be  <= io_be;
+            rd_ctl <= {creg_r(off_lo + 12'd2), creg_r(off_lo)};
         end
     end
+    reg        rd_ch_q;
+    reg  [3:0] rd_be_q;
+    reg [31:0] rd_ctl_q, rd_ram_q;
+    always @(posedge clk) begin
+        rd_ch_q  <= rd_ch;
+        rd_be_q  <= rd_be;
+        rd_ctl_q <= rd_ctl;
+    end
+    wire [31:0] rd_v = rd_ch ? {qa_odd, qa_even} : rd_ctl;
+    assign io_rdata = {rd_be[3:2] != 2'b00 ? rd_v[31:16] : 16'd0, rd_be[1:0] != 2'b00 ? rd_v[15:0] : 16'd0};
 endmodule
