@@ -78,13 +78,17 @@ int main(int argc, char **argv)
     Port pt, pf, pw;
     uint64_t packets = 0;
 
+    // memory latency before the first word of a burst: LAT_MIN + random(LAT_RNG) clocks (default 2..7; the core's
+    // shared SDRAM is slower, e.g. LAT_MIN=12 LAT_RNG=24)
+    const int lat_min = getenv("LAT_MIN") ? atoi(getenv("LAT_MIN")) : 2;
+    const int lat_rng = getenv("LAT_RNG") ? atoi(getenv("LAT_RNG")) : 6;
     auto tick = [&]() {
         // ---- memory service (one word per cycle per port after a random initial latency)
         t->t_rvalid = 0; t->t_done = 0; t->f_rvalid = 0; t->f_done = 0; t->w_wnext = 0;
         t->w_done = pw.done_pending;
         pw.done_pending = false;
         auto rd_port = [&](Port &p, bool req, uint32_t addr, int len, uint8_t &rvalid, uint16_t &rdata, uint8_t &done) {
-            if (req && !p.active) { p.active = true; p.addr = addr; p.left = len; p.wait = 2 + rnd() % 6; }
+            if (req && !p.active) { p.active = true; p.addr = addr; p.left = len; p.wait = lat_min + rnd() % lat_rng; }
             if (p.active) {
                 if (p.wait > 0) p.wait--;
                 else {
@@ -96,7 +100,7 @@ int main(int argc, char **argv)
         rd_port(pt, t->t_req, t->t_addr, t->t_len, t->t_rvalid, t->t_rdata, t->t_done);
         rd_port(pf, t->f_req, t->f_addr, t->f_len, t->f_rvalid, t->f_rdata, t->f_done);
         if (t->w_req && !pw.active && !pw.done_pending && !t->w_done) {
-            pw.active = true; pw.addr = t->w_addr; pw.left = t->w_len; pw.wait = 2 + rnd() % 6;
+            pw.active = true; pw.addr = t->w_addr; pw.left = t->w_len; pw.wait = lat_min + rnd() % lat_rng;
             static long wp = getenv("WPKT") ? atol(getenv("WPKT")) : -1;
             if ((long)packets == wp) printf("WB %06x (x %d y %d)\n", t->w_addr, t->w_addr & 0x3ff, (t->w_addr >> 10) & 0x1ff);
         }
@@ -122,6 +126,11 @@ int main(int argc, char **argv)
     };
 
     uint64_t quads = 0, fails = 0, rtl_cycles = 0;
+    // profile (cycles inside packets): [0] packet/palette overhead, [1] texel/tile miss, [2] segment write-back,
+    // [3] segment blend read, [4] other stall (switch, hazard, P2W refresh), [5] pixel pipeline advancing,
+    // [6] pipeline drain / flush
+    uint64_t prof[7] = {};
+    std::map<int, uint64_t> frame_cyc;
     uint32_t cur_ptr = 0;
     uint32_t q_dx = 0, q_dy = 0, q_ex = 0, q_ey = 0, q_dest = 0;
     bool have = false;
@@ -178,6 +187,18 @@ int main(int argc, char **argv)
         while (!t->done) {
             tick();
             {
+                uint32_t d = t->dbg, r = d >> 28;
+                bool p1m = (d >> 26) & 1, p2m = (d >> 25) & 1, sh = (d >> 24) & 1, fr = (d >> 14) & 1, wr = (d >> 13) & 1;
+                bool anyv = (d >> 18) & 0x1f, grun = (d >> 23) & 1;
+                if (r != 10) prof[r == 6 || r == 7 ? 6 : 0]++;
+                else if (p1m || p2m) prof[1]++;
+                else if (sh && wr) prof[2]++;
+                else if (sh && fr) prof[3]++;
+                else if (sh) prof[4]++;
+                else if (grun || anyv) prof[5]++;
+                else prof[6]++;
+            }
+            {
                 static long wp = getenv("CTRACE") ? atol(getenv("CTRACE")) : -1;
                 if ((long)packets == wp) {
                     uint32_t d = t->dbg;
@@ -199,6 +220,7 @@ int main(int argc, char **argv)
             }
         }
         rtl_cycles += cyc - c0;
+        frame_cyc[b.frame] += cyc - c0;
         packets++;
         if (!(pk[0] & 0x81) && (pk[0] & 0x100)) {
             quads++;
@@ -225,6 +247,27 @@ int main(int argc, char **argv)
         b.step_insn();
     }
     compare();
+    {
+        uint64_t tot = 0;
+        for (auto v : prof) tot += v;
+        const char *nm[7] = {"packet/palette", "texture miss", "segment write-back", "segment blend read", "other stall", "pipeline moving", "drain/flush"};
+        printf("render profile:");
+        for (int i = 0; i < 7; i++) printf(" %s %.1f%%", nm[i], tot ? 100.0 * prof[i] / tot : 0.0);
+        printf("\n");
+        const uint64_t budget = 455ull * 262 * 12;   // clk_sys per frame
+        int over = 0; uint64_t worst = 0; int worst_f = -1;
+        int hist[8] = {};
+        for (auto &kv : frame_cyc) {
+            if (kv.second > worst) { worst = kv.second; worst_f = kv.first; }
+            if (kv.second > budget) over++;
+            int bkt = int(kv.second * 4 / budget); if (bkt > 7) bkt = 7; hist[bkt]++;
+        }
+        printf("frames rendered %zu, over one frame budget (%llu clk): %d, worst frame %d: %llu clk (%.2f frames)\n",
+               frame_cyc.size(), (unsigned long long)budget, over, worst_f, (unsigned long long)worst, double(worst) / budget);
+        printf("frame render time histogram (quarter frames):");
+        for (int i = 0; i < 8; i++) printf(" %d", hist[i]);
+        printf("\n");
+    }
     printf("RENDER DIFFTEST: %s frames=%d packets=%llu quads=%llu rtl_pixels=%u rtl_cycles=%llu (%.2f cycles/pixel)\n",
            fails ? "FAIL" : "PASS", b.frame, (unsigned long long)packets, (unsigned long long)quads, t->stat_pixels,
            (unsigned long long)rtl_cycles, t->stat_pixels ? double(rtl_cycles) / t->stat_pixels : 0.0);

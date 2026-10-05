@@ -26,7 +26,8 @@ module vr0_video_regs (
     output wire [22:0] draw_dest,      // frame-RAM byte address of the draw buffer
     output wire [22:0] display_dest,   // frame-RAM byte address of the displayed buffer
     output wire  [1:0] dither_mode,
-    input  wire [15:0] min_interval    // minimum clocks between packet starts (MAME: 1100)
+    input  wire [15:0] min_interval,   // minimum clocks between packet starts (MAME: 1100)
+    output reg  [15:0] dbg_flip_defer  // vblanks whose flip waited for the renderer (statistics)
 );
     reg  [15:0] q_front;
     reg  [10:0] q_rear;
@@ -49,6 +50,7 @@ module vr0_video_regs (
 
     wire [15:0] off_lo = {io_addr[13:0], 2'b00};      // byte offset of lane 0
     wire        wr = io_sel && io_we;
+    wire        caught_up = flip_sync || (!busy && q_rear == q_front[10:0]);
 
     // 16-bit register write (one lane)
     task automatic w16(input [15:0] off, input [15:0] d, input [1:0] m);
@@ -89,6 +91,7 @@ module vr0_video_regs (
             disp_bank <= 1'b0; dither <= 2'd0; flip_cnt <= 8'd0;
             draw_d <= 23'd0; disp_d <= 23'd0;
             busy <= 1'b0; gap <= 16'd0;
+            dbg_flip_defer <= 16'd0;
         end else begin
             if (gap != 16'd0) gap <= gap - 16'd1;
 
@@ -107,8 +110,14 @@ module vr0_video_regs (
                 gap       <= min_interval;
             end
 
-            // vblank flip (execute_flipping)
-            if (vblank_start && r_start && flip_cnt != 8'd0) begin
+            // vblank flip (execute_flipping). MAME processes a whole packet instantly (one per 1100 clocks), so its
+            // display list is always complete by vblank; this renderer draws pixel by pixel, so a flip also waits
+            // until the renderer has caught up with the list -- stopped at the flip-sync packet, or idle with an
+            // empty queue (the chip's flip-sync behaviour). A late frame is then shown one frame later instead of
+            // half drawn.
+            if (vblank_start && r_start && flip_cnt != 8'd0 && !caught_up)
+                dbg_flip_defer <= dbg_flip_defer + 16'd1;
+            if (vblank_start && r_start && flip_cnt != 8'd0 && caught_up) begin
                 draw_d    <= draw_sel ? front : back;
                 disp_d    <= front;
                 flip_sync <= 1'b0;

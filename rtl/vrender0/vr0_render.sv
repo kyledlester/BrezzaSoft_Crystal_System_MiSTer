@@ -137,9 +137,22 @@ module vr0_render (
     reg [23:0] seg_base;              // SDRAM word address of pixel 0 of the segment
     reg        seg_v;                 // segment holds a valid window
     reg        seg_loaded;            // destination pixels read (blend quads)
+    reg  [4:0] fl_i;                  // blend read (destination load) index
+    // write-back buffer: a finished segment is copied here in one clock and written to SDRAM from here while
+    // the pipeline already draws into the next segment (double buffering)
+    reg [15:0] wbuf [0:31];
+    reg [31:0] wbuf_m;
     reg  [4:0] wb_i;
-    assign w_wdata = seg[wb_i];
-    assign w_wbe   = seg_m[wb_i] ? 2'b11 : 2'b00;
+    assign w_wdata = wbuf[wb_i];
+    assign w_wbe   = wbuf_m[wb_i] ? 2'b11 : 2'b00;
+    task automatic seg_to_wbuf;
+        for (int k = 0; k < 32; k++) wbuf[k] <= seg[k];
+        wbuf_m <= seg_m;
+        w_req  <= 1'b1;
+        w_addr <= seg_base;
+        w_len  <= 6'd32;
+        wb_i   <= 5'd0;
+    endtask
 
     // ------------------------------------------------------------------ quad parameters (latched per packet)
     reg  [9:0] q_dx, q_endx;
@@ -533,30 +546,29 @@ module vr0_render (
                 end
             end
             R_FLUSH: begin
-                if (seg_v && seg_m != 32'd0) begin
-                    w_req  <= 1'b1;
-                    w_addr <= seg_base;
-                    w_len  <= 6'd32;
-                    wb_i   <= 5'd0;
-                    rst    <= R_FLUSHW;
-                end else begin
+                // the last segment goes to the write-back buffer once it is free; the packet is done when
+                // every write-back has completed
+                if (!w_req) begin
+                    if (seg_v && seg_m != 32'd0) seg_to_wbuf();
                     seg_v <= 1'b0;
-                    done  <= 1'b1;
-                    rst   <= R_IDLE;
+                    seg_m <= 32'd0;
+                    rst   <= R_FLUSHW;
                 end
             end
             R_FLUSHW: begin
-                if (w_wnext) wb_i <= wb_i + 5'd1;
-                if (w_done) begin
-                    w_req <= 1'b0;
-                    seg_v <= 1'b0;
-                    seg_m <= 32'd0;
-                    done  <= 1'b1;
-                    rst   <= R_IDLE;
+                if (!w_req) begin
+                    done <= 1'b1;
+                    rst  <= R_IDLE;
                 end
             end
             default: rst <= R_IDLE;
             endcase
+
+            // ---- segment write-back progress (any state)
+            if (w_req) begin
+                if (w_wnext) wb_i <= wb_i + 5'd1;
+                if (w_done) w_req <= 1'b0;
+            end
 
             // ============================================================== pixel pipeline (R_FILL)
             if (rst == R_FILL) begin
@@ -602,34 +614,27 @@ module vr0_render (
                 end
 
                 // ---- segment management for P5
-                if (p5_v && !p5_skip && !p5_in_seg && !f_req && !w_req && !p67_busy) begin
-                    if (seg_v && seg_m != 32'd0) begin
-                        // write the old segment back
-                        w_req  <= 1'b1;
-                        w_addr <= seg_base;
-                        w_len  <= 6'd32;
-                        wb_i   <= 5'd0;
-                    end else begin
-                        seg_v      <= 1'b1;
-                        seg_base   <= {p5_fbword[23:5], 5'd0};
-                        seg_m      <= 32'd0;
-                        seg_loaded <= 1'b0;
-                    end
+                // a pixel outside the current segment: hand the segment to the write-back buffer (when free) and
+                // open the new one in the same clock
+                if (p5_v && !p5_skip && !p5_in_seg && !f_req && !p67_busy && !(seg_v && seg_m != 32'd0 && w_req)) begin
+                    if (seg_v && seg_m != 32'd0) seg_to_wbuf();
+                    seg_v      <= 1'b1;
+                    seg_base   <= {p5_fbword[23:5], 5'd0};
+                    seg_m      <= 32'd0;
+                    seg_loaded <= 1'b0;
                 end
-                if (w_req) begin
-                    if (w_wnext) wb_i <= wb_i + 5'd1;
-                    if (w_done) begin w_req <= 1'b0; seg_v <= 1'b0; seg_m <= 32'd0; end
-                end
-                if (p5_v && !p5_skip && p5_in_seg && q_blend_any && !seg_loaded && !f_req && !p67_busy) begin
+                // destination load for blending; not while that same segment is still being written back
+                if (p5_v && !p5_skip && p5_in_seg && q_blend_any && !seg_loaded && !f_req && !p67_busy &&
+                    !(w_req && w_addr[23:5] == seg_base[23:5])) begin
                     f_req  <= 1'b1;
                     f_addr <= seg_base;
                     f_len  <= 6'd32;
-                    wb_i   <= 5'd0;
+                    fl_i   <= 5'd0;
                 end
                 if (f_req) begin
                     if (f_rvalid) begin
-                        if (!seg_m[wb_i]) seg[wb_i] <= f_rdata;
-                        wb_i <= wb_i + 5'd1;
+                        if (!seg_m[fl_i]) seg[fl_i] <= f_rdata;
+                        fl_i <= fl_i + 5'd1;
                     end
                     if (f_done) begin f_req <= 1'b0; seg_loaded <= 1'b1; end
                 end

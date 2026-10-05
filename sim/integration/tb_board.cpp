@@ -105,10 +105,10 @@ int main(int argc, char **argv)
     top->in_system = 0xff;
     top->in_dsw = 0xff;
     top->rtc_load = 0;
-    top->rst_n = 0;
+    top->rst_n = 0; top->vid_rst_n = 0;
     top->clk = 0;
     for (int i = 0; i < 8; i++) { top->clk = 1; top->eval(); top->clk = 0; top->eval(); }
-    top->rst_n = 1;
+    top->rst_n = 1; top->vid_rst_n = 1;
 
     se3208::Cpu ref;
     std::deque<Acc> rtl_acc;         // CPU data accesses observed in the RTL for the current instruction

@@ -65,6 +65,8 @@ module crystal_core (
     output wire [15:0] dbg_underflows,
     output wire  [4:0] dbg_cpu_state,
     output wire [31:0] dbg_render_pixels,
+    output wire [15:0] dbg_flip_defer,
+    output wire        vb_next,          // vertical blank of the next raster line (CRT Adjust)
     output wire        dbg_d_ack,
     output wire        dbg_d_we,
     output wire [31:0] dbg_d_addr,
@@ -115,6 +117,8 @@ module crystal_core (
         else board_rst_n <= 1'b1;
     end
     assign cpu_running = board_rst_n;
+    reg vid_rst_n = 1'b0;
+    always @(posedge clk_sys) vid_rst_n <= pll_locked;
 
     // ------------------------------------------------------------------ inputs (MiSTer joystick -> MAME ports)
     // joystick bits: 0 right, 1 left, 2 down, 3 up, 4 B1, 5 B2, 6 B3, 7 B4, 8 start, 9 coin, 10 service
@@ -154,10 +158,12 @@ module crystal_core (
     wire [22:0] display_dest;
     wire        crt_blank;
     wire [9:0]  hcnt, vcnt;
+    // vertical blank of the line after the current one (CRT Adjust samples it after the HSync, see crystal_crt_adjust)
+    assign vb_next = (vcnt == g_vtot - 10'd1) ? 1'b0 : (vcnt >= g_vdisp - 10'd1);
     wire        hb0, vb0, hs0, vs0;
 
     crystal_board board (
-        .clk(clk_sys), .rst_n(board_rst_n),
+        .clk(clk_sys), .rst_n(board_rst_n), .vid_rst_n(vid_rst_n),
         .flash_banks(flash_banks), .cpu_credit_max(6'd32), .cpu_turbo(cpu_turbo), .render_interval(16'd1100),
         .in_p1p2(in_p1p2), .in_p3p4(in_p3p4), .in_system(in_system), .in_dsw(dsw),
         .coin_counter(), .lamps(),
@@ -172,7 +178,7 @@ module crystal_core (
         .tex_snoop(da_inv && dc_inv_addr[24:23] == 2'b01), .tex_snoop_addr(dc_inv_addr[24:1]),
         .ss_req(ss_req), .ss_addr(ss_addr), .ss_len(ss_len), .ss_rvalid(c_rvalid[1]), .ss_rdata(sd_rdata), .ss_done(c_done[1]),
         .audio_l(audio_l), .audio_r(audio_r),
-        .dbg_render_pixels(dbg_render_pixels),
+        .dbg_render_pixels(dbg_render_pixels), .dbg_flip_defer(dbg_flip_defer),
         .ce_pix(ce_pix), .hcnt(hcnt), .vcnt(vcnt), .hblank(hb0), .vblank(vb0), .hsync(hs0), .vsync(vs0),
         .display_dest(display_dest), .crt_blank(crt_blank),
         .geo_hdisp(g_hdisp), .geo_vdisp(g_vdisp), .geo_vtot(g_vtot),

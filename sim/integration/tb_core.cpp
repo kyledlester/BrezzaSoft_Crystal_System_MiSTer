@@ -251,9 +251,9 @@ int main(int argc, char **argv)
                 }
                 if (frame % 30 == 0 || frame - last_report >= 30) {
                     last_report = frame;
-                    printf("frame %d cycle %llu retired %llu pc %08x underflows %u sdram_viol %llu\n", frame,
+                    printf("frame %d cycle %llu retired %llu pc %08x underflows %u sdram_viol %llu flip_defer %u\n", frame,
                            (unsigned long long)cyc, (unsigned long long)retired, t->dbg_pc, t->dbg_underflows,
-                           (unsigned long long)sd.violations);
+                           (unsigned long long)sd.violations, (unsigned)t->dbg_flip_defer);
                     fflush(stdout);
                 }
             }

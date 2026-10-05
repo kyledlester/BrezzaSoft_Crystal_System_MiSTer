@@ -46,6 +46,11 @@ Pause, Free Play, DSW 3-7 (unknown, as MAME), Test. Defaults: all Off.
 ## OSD
 
 * **Aspect ratio**, **Scandoubler Fx**: as other MiSTer arcade cores.
+* **CRT Adjust** submenu (native 15-kHz output, Scandoubler Fx None): *CRT Adjust* Off/On, *CRT H-Size* -12..+10 %,
+  *CRT H-Position* -48..+42 pixels, *CRT V-Shift* -8..+7 lines (negative values stop at -3 so VSync never lands
+  on the picture). Same menu, bits and behaviour as the NA-1/NA-2 and NB-1 cores; the sync never changes, so the
+  CRT keeps its lock while adjusting. Off is a true bypass. Implementation: `rtl/crystal/crystal_crt_adjust.sv`
+  around the unmodified MiSTer-CRT-Adjust `rtl/vendor/crt_adjust.sv` (rmonic79, GPL-3.0).
 * **Test switch (SW3)**: enters the BIOS/game test menu.
 * **CPU speed**: *MAME (14.3 MIPS)* reproduces MAME master's SE3208 rate; *Unlimited* removes the pacing
   (diagnostic).

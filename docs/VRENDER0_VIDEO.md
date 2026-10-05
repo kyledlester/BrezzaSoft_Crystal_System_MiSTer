@@ -55,6 +55,19 @@ Banks: `B0 = 0`, `B1 = 0x100000` (or `0x400000`). Front = `display_bank ? B1 : B
 * At vblank (`execute_flipping`, only if started and `flip_count != 0`): draw = `draw_select ? front : back`,
   display = front, clear flip-sync, `flip_count--`, `display_bank ^= 1`.
 
+**Core rule (vr0_video_regs):** the vblank flip additionally waits until the renderer has *caught up* with the
+display list -- stopped at the flip-sync packet, or idle with an empty queue. MAME processes each packet instantly
+(one packet per 1100 clocks), so its list is always complete by vblank; the RTL renderer draws pixel by pixel and
+can still be drawing at vblank in heavy frames. Flipping then (the first hardware build did) shows a half-drawn
+buffer whose undrawn parts still hold the frame from two flips ago: moving sprites jitter back and forth and
+partial sprites flash. With the rule a late frame is shown one vblank later instead, which is what the chip's
+flip-sync mechanism exists for. `dbg_flip_defer` counts the deferred vblanks (core simulation).
+
+**Renderer throughput:** the destination is written in 32-pixel segments; a finished segment is copied into a
+write-back buffer in one clock and written to SDRAM from there while drawing continues in the next segment.
+Measured with the renderer bench (attract, 2..7-clock memory latency): 2.42 -> 1.32 clocks per pixel; the
+write-back itself (one SDRAM word per clock) is now the limit for fills.
+
 ## Crystal of Kings usage (attract, reference statistics)
 
 35 K quads in 3600 frames: all textured quads are **8 bpp with transparency**; 12.9 K tiled, 397 scaled,
@@ -73,7 +86,9 @@ textured + 65 K fill pixels.
 | HSYNC | not modelled | starts HTOT - (HSW+1) - (HBP+1) = pixel 361, 34 px (4.75 us) | HSWBP 0x213B (the 34-pixel field matches NTSC sync width; MAME names the bytes the other way round) |
 | VSYNC | not modelled | 3 lines ending VBP+1 = 15 lines before the end of the frame (lines 244-246) | VSBP 0x0E |
 
-The geometry registers are applied at the next frame boundary (MAME re-times the screen at once; the difference is
+The raster has its own reset (PLL lock only): while the board is held in reset (ROM download, OSD reset) it keeps
+running the CRTC reset-default timing (the crysking geometry above), so a 15-kHz CRT stays locked and shows the
+MiSTer loading screen. The geometry registers are applied at the next frame boundary (MAME re-times the screen at once; the difference is
 invisible: the game programs the CRTC once during boot). The vblank interrupt (IRQ 24) and the frame-buffer flip
 happen at the first line after the visible area, exactly as MAME's screen vblank callback. The hsync/vsync
 placement is a MiSTer/CRT presentation choice derived from the CRTC porch registers; it does not affect the game.

@@ -10,6 +10,7 @@
 module crystal_board (
     input  wire        clk,
     input  wire        rst_n,
+    input  wire        vid_rst_n,        // raster only: kept running through board reset / ROM download
 
     // configuration (MRA board record / OSD)
     input  wire  [3:0] flash_banks,       // populated 16 MiB flash banks
@@ -76,6 +77,7 @@ module crystal_board (
     input  wire        tex_snoop,        // CPU/DMA write to texture RAM (SDRAM word address)
     input  wire [23:0] tex_snoop_addr,
     output wire [31:0] dbg_render_pixels,
+    output wire [15:0] dbg_flip_defer,
 
     // video timing / scanout control
     output wire        ce_pix,
@@ -373,8 +375,10 @@ module crystal_board (
     wire [9:0]  hs_end   = g_htot - {2'b0, g_hbp};
     wire [9:0]  vs_end   = g_vtot - {2'b0, g_vbp};
     wire [9:0]  vs_start = vs_end - 10'd3;
+    // The raster has its own reset: while the board is held in reset (ROM download, OSD reset) it keeps
+    // producing the CRTC's reset-default 15-kHz timing, so a CRT stays locked and shows the loading screen.
     crystal_raster raster (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(vid_rst_n),
         .htotal(g_htot), .hdisp(g_hdisp), .hs_start(hs_start), .hs_end(hs_end),
         .vtotal(g_vtot), .vdisp(g_vdisp), .vs_start(vs_start), .vs_end(vs_end),
         .div(g_tpp == 5'd0 ? 6'd12 : {1'b0, g_tpp}),
@@ -422,7 +426,8 @@ module crystal_board (
         .io_sel(vid_sel), .io_we(b_we), .io_addr(b_addr[15:2]), .io_be(b_be), .io_wdata(b_wdata), .io_rdata(vid_rdata),
         .vblank_start(vblank_start), .vblank_irq(vid_vblank_irq),
         .pkt_start(pkt_start), .pkt_addr(pkt_addr), .pkt_done(pkt_done), .pkt_flip(pkt_flip),
-        .draw_dest(draw_dest), .display_dest(display_dest), .dither_mode(), .min_interval(render_interval)
+        .draw_dest(draw_dest), .display_dest(display_dest), .dither_mode(), .min_interval(render_interval),
+        .dbg_flip_defer(dbg_flip_defer)
     );
 
     vr0_render render (

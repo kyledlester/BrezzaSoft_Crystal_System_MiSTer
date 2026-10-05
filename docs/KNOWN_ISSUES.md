@@ -19,4 +19,6 @@ Category: A blocks BIOS, B blocks game, C blocks graphics/playability, D accurac
 | K13 | D | Sound EnvVol kept as the 24-bit register image between samples (MAME keeps an s32) | open |
 | K14 | D | Timer auto-reload uses the period registered one clock earlier: a TimerControl/TimerCount write in the single clock before an expiry is applied one period late (timing closure; starts are exact) | by design |
 | K15 | D | Texture-RAM write snoop reaches the renderer's texture caches one clock after the CPU write is issued (the write itself reaches SDRAM later; fills starting in that clock are marked dirty) | by design |
-| K16 | U | Not yet run on hardware: SDRAM board timing, DDR3 latency, HDMI/analog output, audio level and input mapping are simulation-only so far | HARDWARE_TEST_1 |
+| K16 | U | Hardware test 1 (owner, 128 MB SDRAM, 15-kHz CRT): boot, attract, coin/start, gameplay, controls and sound work; findings fixed in the next build: CRT lost sync during the loading screen, sprite jitter / flashing lines (K17); HDMI not yet checked | partly closed |
+| K17 | D | Frame flips wait for the renderer to reach the frame's flip-sync packet (MAME flips at vblank regardless, its renderer being instantaneous); a frame the renderer cannot finish in time is shown one frame later. Fixes the first hardware build's sprite jitter / flashing lines | by design |
+| K18 | D | The BIOS boot briefly programs 640x480 (about 31 kHz) before the 320x240 game mode, as the real board; a 15-kHz CRT may roll for that moment after the loading screen | as hardware |
