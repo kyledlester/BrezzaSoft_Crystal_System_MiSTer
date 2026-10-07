@@ -1,5 +1,7 @@
 # BrezzaSoft Crystal System for MiSTer
 
+<img width="640" height="480" alt="image" src="https://github.com/user-attachments/assets/44f2e451-28d4-4d14-b592-9e8910246c3d" />
+
 A MiSTer FPGA core for the **BrezzaSoft Crystal System** (2001), a cartridge arcade
 platform built around the MagicEyes **VRender0** system-on-chip. First supported game:
 **The Crystal of Kings**. One core (`Crystal`) is written for the whole board; each
