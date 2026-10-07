@@ -84,7 +84,7 @@ Quartus 17.0 Lite: fit successful, 16,828 / 41,910 ALMs (40 %), 24,407 registers
 SDRAM_CLK +2.619 ns, TNS 0. Closure came from register/pipeline changes only (renderer P2W/P6/P7 stages, registered
 tag lookups, per-client SDRAM timing flags, single-adder ALU, two-clock shifts, registered fetch translation,
 pipelined timer start, two-clock envelope/mix) -- all benches re-run identical after each change.
-RBF: `Releases/Crystal_YYYYMMDD.rbf`; MRA: `mra/The Crystal of Kings.mra`. Procedure: docs/HARDWARE_TEST_1.md.
+RBF: `Releases/Crystal_YYYYMMDD.rbf`; MRA: `MRA/The Crystal of Kings.mra`. Procedure: docs/HARDWARE_TEST_1.md.
 
 ### Hardware test 1 (owner, 128 MB SDRAM, 15-kHz CRT) and fixes
 

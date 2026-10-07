@@ -83,7 +83,7 @@ writes.
 | `sim/reference/` | MAME-derived C++ reference model (executable specification) |
 | `sim/cpu/`, `sim/vrender0/`, `sim/integration/` | Verilator benches |
 | `scripts/` | build, MRA stream, research and comparison tools |
-| `mra/` | MRA files |
+| `MRA/` | MRA files |
 | `docs/` | specifications and evidence |
 
 ## Generic vs. game-specific

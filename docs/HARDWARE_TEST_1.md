@@ -9,7 +9,7 @@ modules, HDMI/analog output, input mapping, audio level).
 | File | Copy to |
 | --- | --- |
 | `Releases/Crystal_YYYYMMDD.rbf` (newest) | `/media/fat/_Arcade/cores/` |
-| `mra/The Crystal of Kings.mra` | `/media/fat/_Arcade/` |
+| `MRA/The Crystal of Kings.mra` | `/media/fat/_Arcade/` |
 | `crysking.zip`, `crysbios.zip` (your MAME sets) | `/media/fat/games/mame/` |
 
 ## Expected sequence (full-core simulation; times include the ~1 s ROM download)

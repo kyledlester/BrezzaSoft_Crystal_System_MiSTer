@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Validate a Crystal MRA against ROM zips and (optionally) build the exact ioctl streams it describes.
 
-  python scripts/mra_stream.py "mra/The Crystal of Kings.mra" --rompath C:/Users/klest/Downloads/mame/roms
+  python scripts/mra_stream.py "MRA/The Crystal of Kings.mra" --rompath C:/Users/klest/Downloads/mame/roms
         [--out DIR]   write index<N>.bin streams (for simulation; never commit them)
 
 Supports the subset of the MRA format this project uses: <rom index zip>, <part name crc>, <part repeat>,
