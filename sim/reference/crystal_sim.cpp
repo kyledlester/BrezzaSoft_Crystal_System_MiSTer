@@ -83,7 +83,7 @@ int main(int argc, char **argv)
     std::set<int> snap_at;
     bool pc_hist = false, pic289 = false, stats = false;
     std::multimap<int, std::string> input_events;
-    std::map<int, std::string> dump_ram;
+    std::map<int, std::string> dump_ram, dump_tex;
     long long stop_pc = -1;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -106,6 +106,7 @@ int main(int argc, char **argv)
         else if (a == "--stats") stats = true;
         else if (a == "--input") { std::string v = next(); input_events.emplace(atoi(v.c_str()), v.substr(v.find(':') + 1)); }
         else if (a == "--dump-ram") { std::string v = next(); dump_ram[atoi(v.c_str())] = v.substr(v.find(':') + 1); }
+        else if (a == "--dump-tex") { std::string v = next(); dump_tex[atoi(v.c_str())] = v.substr(v.find(':') + 1); }
         else if (a == "--stop-pc") stop_pc = strtoll(next().c_str(), nullptr, 0);
         else { fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
     }
@@ -181,6 +182,12 @@ int main(int argc, char **argv)
                 char name[512];
                 snprintf(name, sizeof name, "%s/frame_%05d.ppm", out.c_str(), b.frame);
                 write_ppm(name, b);
+            }
+            auto dt = dump_tex.find(b.frame);
+            if (dt != dump_tex.end()) {
+                FILE *f = fopen(dt->second.c_str(), "wb");
+                fwrite(b.texram.data(), 1, b.texram.size(), f);
+                fclose(f);
             }
             auto d = dump_ram.find(b.frame);
             if (d != dump_ram.end()) {

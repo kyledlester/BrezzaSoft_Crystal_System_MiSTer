@@ -80,6 +80,8 @@ int main(int argc, char **argv)
     std::set<int> snap_at;
     std::multimap<int, std::string> inputs;
     bool turbo = false, flip = false;
+    int dump_tex_frame = -1; std::string dump_tex_file;
+    int line_w = 320;                     // active pixels per line (320; Top Blade V 360)
     int dsw = -1;                         // >= 0: send the DIP switches on index 254 after the ROM download (as MiSTer)
     std::string wav;
     for (int i = 1; i < argc; i++) {
@@ -93,17 +95,55 @@ int main(int argc, char **argv)
         else if (a == "--input") { std::string v = nx(); inputs.emplace(atoi(v.c_str()), v.substr(v.find(':') + 1)); }
         else if (a == "--turbo") turbo = true;
         else if (a == "--flip") flip = true;
+        else if (a == "--dump-tex") { std::string v = nx(); dump_tex_frame = atoi(v.c_str()); dump_tex_file = v.substr(v.find(':') + 1); }
         else if (a == "--dsw") dsw = (int)strtol(nx().c_str(), nullptr, 16);
         else if (a == "--wav") wav = nx();
     }
     FILE *fw = wav.empty() ? nullptr : fopen(wav.c_str(), "wb");
     if (fw) { uint8_t h[44] = {}; fwrite(h, 1, 44, fw); }
     uint64_t wav_samples = 0, wav_nonzero = 0;
+    // flash words the protection overlay replaces (crysking: game id 1, evosocc: game id 2), 16-byte granules
+    auto is_prot = [](uint32_t off) {
+        static const uint32_t w[] = {0x7bb0, 0x9760, 0x8090, 0x8a50,                                   // crysking
+                                     0x2973880, 0x2973890, 0x2971050, 0x2971060, 0x2978030, 0x2974ed0}; // evosocc
+        for (uint32_t x : w) if ((off >> 4) == (x >> 4)) return true;
+        return false;
+    };
+    // optional protection PIC firmware stream (index 3: Top Blade V, Office Yeoin Cheonha)
+    std::vector<uint8_t> s3;
+    { std::ifstream f3(stream_dir + "/index3.bin", std::ios::binary);
+      if (f3) s3.assign((std::istreambuf_iterator<char>(f3)), std::istreambuf_iterator<char>()); }
     auto s0 = read_file(stream_dir + "/index0.bin");
     auto s1 = read_file(stream_dir + "/index1.bin");
 
     Vcrystal_core *t = new Vcrystal_core;
     SdramModel sd;
+    // ---- texture-write monitor: every CPU/DMA write to texture RAM (board bus) must reach the SDRAM unchanged and
+    //      in order (through crystal_texq and the D-cache)
+    struct HW { uint32_t w; uint16_t d; uint8_t lanes; };
+    std::deque<HW> tex_exp;
+    uint64_t tex_ok = 0, tex_bad = 0, flash_rd_ok = 0, flash_rd_bad = 0;
+    struct TR { uint64_t cyc; char k; uint32_t w; uint32_t d; uint8_t m; };
+    std::deque<TR> ring;
+    auto ring_add = [&](TR r) { ring.push_back(r); if (ring.size() > 160) ring.pop_front(); };
+    bool ring_dumped = false;
+    bool mon_on = false;
+    int *cur_frame = nullptr; uint64_t *cur_cyc = nullptr;                  // after the board left reset (the loader clears the RAM before)
+    sd.on_write = [&](uint32_t w, uint16_t d, uint8_t lanes) {
+        if (!mon_on || w < 0x400000 || w >= 0x800000) return;
+        { static int tf = getenv("TEXTRACE") ? atoi(getenv("TEXTRACE")) : -1;
+          if (tf >= 0 && *cur_frame >= tf && *cur_frame <= tf + 2 && w >= 0x424400 && w < 0x424440)
+              printf("  SDRAM W %06x %04x lanes %x cyc %llu\n", w, d, lanes, (unsigned long long)*cur_cyc); }
+        if (tex_exp.empty()) { if (tex_bad++ < 10) printf("TEXWRITE unexpected word %06x %04x lanes %x\n", w, d, lanes); return; }
+        ring_add({*cur_cyc, 'S', w, d, lanes});
+        HW e = tex_exp.front(); tex_exp.pop_front();
+        uint16_t m = (lanes & 1 ? 0x00ff : 0) | (lanes & 2 ? 0xff00 : 0);
+        if (e.w != w || e.lanes != lanes || ((e.d ^ d) & m)) {
+            if (!ring_dumped) { ring_dumped = true;
+                for (auto &r : ring) printf("  %c %06x %08x m%x cyc %llu\n", r.k, r.w, r.d, r.m, (unsigned long long)r.cyc); }
+            if (tex_bad++ < 10) printf("TEXWRITE MISMATCH: expected %06x %04x lanes %x, SDRAM got %06x %04x lanes %x\n", e.w, e.d, e.lanes, w, d, lanes);
+        } else tex_ok++;
+    };
     Ddr3 ddr;
     t->clk_sys = 0;
     t->pll_locked = 0;
@@ -157,6 +197,7 @@ int main(int argc, char **argv)
     // wait for SDRAM init
     for (int i = 0; i < 12000; i++) tick();
     download(1, s1);
+    if (!s3.empty()) { download(3, s3); printf("PIC firmware sent on index 3: %zu bytes\n", s3.size()); }
     download(0, s0);
     if (dsw >= 0) {
         std::vector<uint8_t> d(8, 0);
@@ -173,7 +214,7 @@ int main(int argc, char **argv)
             for (int b = 0; b < 8; b++) v |= uint64_t(s0[w * 8 + b]) << (8 * b);
             if (ddr.mem[w] != v) {
                 uint32_t off = uint32_t(w * 8);
-                bool prot = (off >> 4) == (0x7bb0 >> 4) || (off >> 4) == (0x9760 >> 4) || (off >> 4) == (0x8090 >> 4) || (off >> 4) == (0x8a50 >> 4);
+                bool prot = is_prot(off);
                 if (!prot && bad++ < 4) printf("  flash store mismatch at %08x\n", off);
             }
         }
@@ -183,6 +224,7 @@ int main(int argc, char **argv)
     // ---- run frames, capture video
     std::vector<uint32_t> img(1024 * 512, 0);
     int frame = 0, x = 0, y = 0;
+    cur_frame = &frame; cur_cyc = &cyc;
     bool vb_q = true, hb_q = true;
     uint64_t retired = 0, illegal = 0, last_report = 0;
     uint64_t st_hist[32] = {};
@@ -195,13 +237,13 @@ int main(int argc, char **argv)
             static uint32_t bankreg = 0;
             static int flash_bad = 0;
             if (t->dbg_d_ack && t->dbg_d_we && (t->dbg_d_addr & ~3u) == 0x01280000) bankreg = (t->dbg_d_data >> 1) & 7;
-            if (t->dbg_d_ack && !t->dbg_d_we && t->dbg_d_addr >= 0x05000004 && t->dbg_d_addr < 0x06000000 && bankreg < 3) {
+            if (t->dbg_d_ack && !t->dbg_d_we && t->dbg_d_addr >= 0x05000004 && t->dbg_d_addr < 0x06000000 && bankreg < (s0.size() - 0x20000) / 0x1000000) {
                 uint32_t off = bankreg * 0x1000000 + (t->dbg_d_addr & 0xfffffc);
                 uint32_t exp = s0[off] | s0[off + 1] << 8 | s0[off + 2] << 16 | uint32_t(s0[off + 3]) << 24;
                 for (int k = 0; k < 4; k++) if (!((t->dbg_d_be >> k) & 1)) exp &= ~(0xffu << (8 * k));
                 uint32_t got = t->dbg_d_data;
                 for (int k = 0; k < 4; k++) if (!((t->dbg_d_be >> k) & 1)) got &= ~(0xffu << (8 * k));
-                bool prot = (off >> 4) == (0x7bb0 >> 4) || (off >> 4) == (0x9760 >> 4) || (off >> 4) == (0x8090 >> 4) || (off >> 4) == (0x8a50 >> 4);
+                bool prot = is_prot(off);
                 if (got != exp && !prot && flash_bad++ < 10)
                     printf("FLASH READ MISMATCH bank %u off %07x be %x got %08x expected %08x cycle %llu frame %d\n", bankreg, off, t->dbg_d_be, got, exp, (unsigned long long)cyc, frame);
             }
@@ -222,6 +264,29 @@ int main(int argc, char **argv)
             }
         }
         st_hist[t->dbg_cpu_state & 31]++;
+        if (t->cpu_running) mon_on = true;
+        if (t->dbg_m_ack) {
+            uint32_t pa = t->dbg_m_addr;
+            if (t->dbg_m_we && !(pa & 0x8000000) && ((pa >> 23) & 3) == 1) {
+                uint32_t w = (pa & 0x1fffffc) >> 1;
+                uint8_t be = t->dbg_m_be;
+                { static int tf = getenv("TEXTRACE") ? atoi(getenv("TEXTRACE")) : -1;
+                  if (tf >= 0 && frame >= tf && frame <= tf + 2 && w >= 0x424400 && w < 0x424440)
+                      printf("  BUS W %06x be %x data %08x cyc %llu\n", w, be, t->dbg_m_wdata, (unsigned long long)cyc); }
+                ring_add({cyc, 'B', w, t->dbg_m_wdata, be});
+                ring_add({cyc, t->dbg_m_req ? 'r' : '!', pa, 0, 0});
+                if (be & 3)  tex_exp.push_back({w,     uint16_t(t->dbg_m_wdata),       uint8_t(be & 3)});
+                if (be & 12) tex_exp.push_back({w + 1, uint16_t(t->dbg_m_wdata >> 16), uint8_t((be >> 2) & 3)});
+            }
+            if (!t->dbg_m_we && (pa & 0x8000000)) {
+                uint32_t off = pa & 0x7fffffc;
+                if (off + 3 < s0.size() - 0x20000 && !is_prot(off)) {
+                    uint32_t exp = s0[off] | s0[off + 1] << 8 | s0[off + 2] << 16 | uint32_t(s0[off + 3]) << 24;
+                    if (exp == t->dbg_m_rdata) flash_rd_ok++;
+                    else if (flash_rd_bad++ < 10) printf("FLASH(bus) READ MISMATCH off %07x got %08x expected %08x frame %d\n", off, t->dbg_m_rdata, exp, frame);
+                }
+            }
+        }
         {
             static unsigned last_defer = 0;
             if (t->dbg_flip_defer != last_defer) {
@@ -243,15 +308,15 @@ int main(int argc, char **argv)
                 if (x < 1024 && y < 512) img[y * 1024 + x] = (t->r << 16) | (t->g << 8) | t->b;
                 x++;
             }
-            if (t->hblank && !hb_q) { x = 0; if (!t->vblank) y++; }
+            if (t->hblank && !hb_q) { if (!t->vblank && x > 0) line_w = x; x = 0; if (!t->vblank) y++; }
             if (t->vblank && !vb_q) {
                 // frame complete
                 if ((snap_every && frame % snap_every == 0) || snap_at.count(frame)) {
                     char name[512];
                     snprintf(name, sizeof name, "%s/core_%05d.ppm", out.c_str(), frame);
                     FILE *f = fopen(name, "wb");
-                    fprintf(f, "P6\n320 240\n255\n");
-                    for (int yy = 0; yy < 240; yy++) for (int xx = 0; xx < 320; xx++) {
+                    fprintf(f, "P6\n%d 240\n255\n", line_w);
+                    for (int yy = 0; yy < 240; yy++) for (int xx = 0; xx < line_w; xx++) {
                         uint32_t p = img[yy * 1024 + xx];
                         uint8_t c[3] = {uint8_t(p >> 16), uint8_t(p >> 8), uint8_t(p)};
                         fwrite(c, 1, 3, f);
@@ -260,6 +325,12 @@ int main(int argc, char **argv)
                 }
                 frame++;
                 y = 0;
+                if (frame == dump_tex_frame) {   // texture RAM (SDRAM bank 1 = words 0x400000-0x7fffff), bytes LE
+                    FILE *f = fopen(dump_tex_file.c_str(), "wb");
+                    for (uint32_t w = 0x400000; w < 0x800000; w++) { uint16_t v = sd.mem[w]; fputc(v & 0xff, f); fputc(v >> 8, f); }
+                    fclose(f);
+                    printf("texture RAM dumped at frame %d\n", frame);
+                }
                 auto r = inputs.equal_range(frame);
                 for (auto it = r.first; it != r.second; ++it) {
                     std::string w = it->second.substr(0, it->second.find(':'));
@@ -290,7 +361,10 @@ int main(int argc, char **argv)
         fclose(fw);
         printf("audio: %llu samples, %llu nonzero\n",(unsigned long long)wav_samples, (unsigned long long)wav_nonzero);
     }
-    bool ok = sd.violations == 0 && illegal == 0;
+    printf("bus monitors: flash reads %llu ok / %llu bad, texture writes %llu ok / %llu bad (%zu still queued)\n",
+           (unsigned long long)flash_rd_ok, (unsigned long long)flash_rd_bad, (unsigned long long)tex_ok,
+           (unsigned long long)tex_bad, tex_exp.size());
+    bool ok = sd.violations == 0 && illegal == 0 && flash_rd_bad == 0 && tex_bad == 0;
     {
         uint64_t tot = 0;
         for (int i = 0; i < 16; i++) tot += st_hist[i];

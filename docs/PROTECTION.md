@@ -1,4 +1,20 @@
-# Crystal of Kings protection
+# Crystal System protection
+
+Each cartridge carries a PIC microcontroller ("dgSMART-PR" family) that talks to the CPU over one data line
+(PIO bit 29, reset on PIO bit 30). Per game:
+
+| Game | PIC | MAME | Core |
+| --- | --- | --- | --- |
+| The Crystal of Kings | PIC16F84A, undumped | `init_crysking()` patches 8 flash words | the same words substituted while loading (overlay, game id 1) |
+| Evolution Soccer | PIC16F84A, undumped | `init_evosocc()` patches 8 words in flash bank 2 | the same, game id 2 |
+| Top Blade V | PIC16F628A, dumped | emulated (pic16x8x), VR0 at 80 MHz | `crystal_pic16` runs the firmware (MRA index 3), clock as MAME |
+| Office Yeoin Cheonha | PIC16F84A, dumped | emulated (pic16x8x) | `crystal_pic16` runs the firmware |
+
+The PIC core is verified instruction by instruction against `sim/reference/pic16_ref.h` (a port of MAME's
+pic16x8x) by `scripts/sim/pic_difftest.sh`: both firmwares (2 M instructions each) and 40 random programs.
+Without the PIC, Top Blade V stops at its version screen and Office Yeoin Cheonha at the BIOS boot.
+
+## The Crystal of Kings
 
 ## Hardware
 

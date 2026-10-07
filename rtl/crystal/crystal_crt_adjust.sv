@@ -19,6 +19,9 @@
 //   HSync-to-HSync window: active 94..413, centre 254; in read ticks with f = 1 - hsize / 100:
 //     hc = round(254 f) - 254, lo = ceil(34 f) - 94, hi = floor(455 f) - 417.
 //   lo >= -63, so SYNC_LAG = 64.
+//   360-pixel mode (Top Blade V programs HDISP 360, HSWBP 0x2121: HSync 387..420, same 455 x 262 raster):
+//   window active 68..427, centre 248: hc = round(248 f) - 248, lo = ceil(34 f) - 68, hi = floor(455 f) - 431;
+//   selected by `wide` (HDISP > 320), sampled per frame.
 //   V-Shift: the content is one line late through the buffer (lines 1..240) and VSync starts at line 244, so a
 //   negative shift is clamped at -3 (VSync never lands on a picture line).
 // The controls are sampled once per frame (frame_event, inside vertical blanking); the adjust is gated off while
@@ -39,6 +42,7 @@ module crystal_crt_adjust #(
     input  wire [3:0]  osd_vshift,      // status[108:105]
     input  wire        sd_off,          // scandoubler off (Fx None and not forced)
     input  wire        vb_next,         // the vertical blank of the NEXT native line (see above)
+    input  wire        wide,            // 360-pixel picture (HDISP > 320): the second geometry table
     // native stream
     input  wire [23:0] rgb_in,
     input  wire        hblank_in,
@@ -59,6 +63,8 @@ module crystal_crt_adjust #(
     output reg  signed [3:0] vsh_s   = 4'sd0
 );
     reg crt_on = 1'b0;
+    reg wide_q = 1'b0;
+    always @(posedge clk_sys) if (frame_event) wide_q <= wide;
     always @(posedge clk_sys) if (frame_event) begin
         crt_on  <= osd_on;
         hsize_s <= (osd_hsize <= 5'd10) ? $signed(osd_hsize)
@@ -75,32 +81,62 @@ module crystal_crt_adjust #(
     // (formulas in the header)
     reg signed [8:0] hc, lo, hi;
     always_comb begin
+        if (!wide_q) begin
         case (hsize_s)
-            -5'sd12: begin hc = 30; lo = -55; hi = 92; end
-            -5'sd11: begin hc = 28; lo = -56; hi = 88; end
-            -5'sd10: begin hc = 25; lo = -56; hi = 83; end
-            -5'sd9: begin hc = 23; lo = -56; hi = 78; end
-            -5'sd8: begin hc = 20; lo = -57; hi = 74; end
-            -5'sd7: begin hc = 18; lo = -57; hi = 69; end
-            -5'sd6: begin hc = 15; lo = -57; hi = 65; end
-            -5'sd5: begin hc = 13; lo = -58; hi = 60; end
-            -5'sd4: begin hc = 10; lo = -58; hi = 56; end
-            -5'sd3: begin hc = 8; lo = -58; hi = 51; end
-            -5'sd2: begin hc = 5; lo = -59; hi = 47; end
-            -5'sd1: begin hc = 3; lo = -59; hi = 42; end
-            5'sd0: begin hc = 0; lo = -60; hi = 38; end
-            5'sd1: begin hc = -3; lo = -60; hi = 33; end
-            5'sd2: begin hc = -5; lo = -60; hi = 28; end
-            5'sd3: begin hc = -8; lo = -61; hi = 24; end
-            5'sd4: begin hc = -10; lo = -61; hi = 19; end
-            5'sd5: begin hc = -13; lo = -61; hi = 15; end
-            5'sd6: begin hc = -15; lo = -62; hi = 10; end
-            5'sd7: begin hc = -18; lo = -62; hi = 6; end
-            5'sd8: begin hc = -20; lo = -62; hi = 1; end
-            5'sd9: begin hc = -23; lo = -63; hi = -3; end
-            5'sd10: begin hc = -25; lo = -63; hi = -8; end
+                -5'sd12: begin hc = 30; lo = -55; hi = 92; end
+                -5'sd11: begin hc = 28; lo = -56; hi = 88; end
+                -5'sd10: begin hc = 25; lo = -56; hi = 83; end
+                -5'sd9: begin hc = 23; lo = -56; hi = 78; end
+                -5'sd8: begin hc = 20; lo = -57; hi = 74; end
+                -5'sd7: begin hc = 18; lo = -57; hi = 69; end
+                -5'sd6: begin hc = 15; lo = -57; hi = 65; end
+                -5'sd5: begin hc = 13; lo = -58; hi = 60; end
+                -5'sd4: begin hc = 10; lo = -58; hi = 56; end
+                -5'sd3: begin hc = 8; lo = -58; hi = 51; end
+                -5'sd2: begin hc = 5; lo = -59; hi = 47; end
+                -5'sd1: begin hc = 3; lo = -59; hi = 42; end
+                5'sd0: begin hc = 0; lo = -60; hi = 38; end
+                5'sd1: begin hc = -3; lo = -60; hi = 33; end
+                5'sd2: begin hc = -5; lo = -60; hi = 28; end
+                5'sd3: begin hc = -8; lo = -61; hi = 24; end
+                5'sd4: begin hc = -10; lo = -61; hi = 19; end
+                5'sd5: begin hc = -13; lo = -61; hi = 15; end
+                5'sd6: begin hc = -15; lo = -62; hi = 10; end
+                5'sd7: begin hc = -18; lo = -62; hi = 6; end
+                5'sd8: begin hc = -20; lo = -62; hi = 1; end
+                5'sd9: begin hc = -23; lo = -63; hi = -3; end
+                5'sd10: begin hc = -25; lo = -63; hi = -8; end
             default: begin hc = 0; lo = -60; hi = 38; end
         endcase
+        end else begin
+        // 360-pixel mode (Top Blade V: HDISP 360, HSync 387..420): window active 68..427, centre 248
+        case (hsize_s)
+                -5'sd12: begin hc = 30; lo = -29; hi = 78; end
+                -5'sd11: begin hc = 27; lo = -30; hi = 74; end
+                -5'sd10: begin hc = 25; lo = -30; hi = 69; end
+                -5'sd9: begin hc = 22; lo = -30; hi = 64; end
+                -5'sd8: begin hc = 20; lo = -31; hi = 60; end
+                -5'sd7: begin hc = 17; lo = -31; hi = 55; end
+                -5'sd6: begin hc = 15; lo = -31; hi = 51; end
+                -5'sd5: begin hc = 12; lo = -32; hi = 46; end
+                -5'sd4: begin hc = 10; lo = -32; hi = 42; end
+                -5'sd3: begin hc = 7; lo = -32; hi = 37; end
+                -5'sd2: begin hc = 5; lo = -33; hi = 33; end
+                -5'sd1: begin hc = 2; lo = -33; hi = 28; end
+                5'sd0: begin hc = 0; lo = -34; hi = 24; end
+                5'sd1: begin hc = -2; lo = -34; hi = 19; end
+                5'sd2: begin hc = -5; lo = -34; hi = 14; end
+                5'sd3: begin hc = -7; lo = -35; hi = 10; end
+                5'sd4: begin hc = -10; lo = -35; hi = 5; end
+                5'sd5: begin hc = -12; lo = -35; hi = 1; end
+                5'sd6: begin hc = -15; lo = -36; hi = -4; end
+                5'sd7: begin hc = -17; lo = -36; hi = -8; end
+                5'sd8: begin hc = -20; lo = -36; hi = -13; end
+                5'sd9: begin hc = -22; lo = -37; hi = -17; end
+                5'sd10: begin hc = -25; lo = -37; hi = -22; end
+            default: begin hc = 0; lo = -34; hi = 24; end
+        endcase
+        end
     end
     reg signed [8:0] hoff_q = 9'sd0;
     wire signed [9:0] hoff_raw = $signed({hc[8], hc}) - ($signed({{6{hpos_s[3]}}, hpos_s}) * 10'sd6);

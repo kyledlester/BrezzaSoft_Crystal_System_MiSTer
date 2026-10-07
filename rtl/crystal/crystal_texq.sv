@@ -19,7 +19,7 @@
 // on a texture-RAM read while writes are pending). Other SDRAM requests pass through untouched; the queue takes
 // the D-cache port only between CPU transactions.
 module crystal_texq #(
-    parameter integer AW = 11                // 2^AW entries
+    parameter integer AW = 12                // 2^AW entries (Evolution Soccer peaks above 2,000)
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -39,6 +39,7 @@ module crystal_texq #(
     output wire  [3:0] d_be,
     output wire [31:0] d_wdata,
     input  wire        d_ack,
+    input  wire        d_idle,               // the D-cache has no transaction in progress
 
     // display-list queue front (video registers)
     input  wire        front_wr,             // CPU wrote the queue front (merged 16-bit value)
@@ -74,7 +75,9 @@ module crystal_texq #(
     wire head_front = head[EW-1];
     wire pop_front  = head_ok && head_front;
     wire cpu_pass   = c_req && !tex_wr && !(tex_rd && !empty);
-    wire start_own  = head_ok && !head_front && drain_ok && !own && !cpu_pass;
+    // take the D-cache port only between transactions: no CPU request on the bus and the D-cache idle (a CPU
+    // request it accepted may still be in progress after the request line dropped)
+    wire start_own  = head_ok && !head_front && drain_ok && !own && !cpu_pass && d_idle;
     wire pop_wr     = own && d_ack;
     wire pop        = pop_front || pop_wr;
 

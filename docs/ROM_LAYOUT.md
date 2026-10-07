@@ -28,7 +28,23 @@ Byte order: `ROM_REGION32_LE` + plain `ROM_LOAD` means file byte *i* is CPU byte
 | `0x3000000` | `0x20000` | BIOS (`mx27l1000.u14`, or `-alt` in the alternative MRA) | SDRAM bank 3 |
 
 Total 0x3020000 bytes. Games with fewer/more flash chips use the same scheme (bank *n* at n·16 MiB, BIOS after the
-last populated bank) and declare the bank count in the board record.
+last populated bank) and declare the bank count in the board record:
+
+| Game | Flash banks (stream) | BIOS | Stream size |
+| --- | --- | --- | --- |
+| crysking | `bcsv0004f01.u1`-`f03.u3` (3) | `mx27l1000.u14` (crysbios) | 0x3020000 |
+| evosocc | `bcsv0001u01`-`u03` (3) | `mx27l1000.u14` (crysbios) | 0x3020000 |
+| topbladv | `flash.u1` (1) | `mx27l1000.u14` (crysbios) | 0x1020000 |
+| officeye | `flash.u1`, `flash.u2` (2) | `bios.u14` (its own, from officeye.zip) | 0x2020000 |
+
+## MRA index 3: protection PIC firmware
+
+The MAME `pic` region, byte for byte (16-bit little-endian words): program memory at word 0, configuration word at
+word 0x2007, EEPROM byte *i* at word 0x2100 + *i*. Top Blade V: PIC16F628A, 0x4300 bytes
+(`top_blade_v_pic16f628a.u14`, CRC `9cdea57b`; older sets: `top_blade_v_pic16c727.bin`). Office Yeoin Cheonha:
+PIC16F84A, 0x4280 bytes (`office_yeo_in_cheon_ha_pic16f84a.u14`, CRC `7561cdf5`). The MRA matches by CRC. The
+loader writes program words and EEPROM into `crystal_pic16`; the configuration word is not used (both have the
+watchdog disabled).
 
 ## MRA index 1: board record (16 bytes)
 
@@ -36,7 +52,7 @@ last populated bank) and declare the bank count in the board record.
 | --- | --- |
 | 0-3 | `"CRYS"` magic |
 | 4 | record version (1) |
-| 5 | game id: 0 = generic (no overlay), 1 = crysking |
+| 5 | game id: 0 = generic (no overlay), 1 = crysking, 2 = evosocc, 3 = topbladv, 4 = officeye |
 | 6 | populated flash banks (1-8) |
 | 7-15 | reserved, 0 |
 

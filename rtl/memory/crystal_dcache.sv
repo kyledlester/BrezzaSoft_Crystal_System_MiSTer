@@ -26,6 +26,7 @@ module crystal_dcache (
     output reg         wr_done,       // pulse: a synchronous (texture / frame RAM) write reached the SDRAM
     output reg  [24:0] wr_done_addr,  //   (its last word was issued), for the renderer's texture-cache snoop
     output wire        wb_busy,
+    output wire        idle,          // no transaction in progress (a new request may be presented)
 
     // SDRAM client
     output reg         m_req,
@@ -91,6 +92,7 @@ module crystal_dcache (
     wire cacheable_q = (a_q[24:23] == 2'b00) || (a_q[24:23] == 2'b11);
     wire hit = (st == S_LOOK) && !we_q && t_q == {1'b1, a_q[24:13]};
     assign ack   = hit || ack_r;
+    assign idle  = (st == S_IDLE) && !ack_r;
     assign rdata = hit ? d_q : rd_r;
 
     // drain / memory sequencer shares the SDRAM client: 0 idle, 1 drain write, 2 fill read, 3 uncached

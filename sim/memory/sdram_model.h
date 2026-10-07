@@ -9,9 +9,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <vector>
+#include <functional>
 
 struct SdramModel {
     std::vector<uint16_t> mem;
+    std::function<void(uint32_t word, uint16_t data, uint8_t lanes)> on_write;   // optional write monitor
     bool open[4] = {};
     uint32_t row[4] = {};
     int64_t t_act[4], t_pre[4], t_wr[4], t_rd[4];
@@ -77,6 +79,7 @@ struct SdramModel {
             if (!(dqm & 1)) v = (v & 0xff00) | (dq_o & 0x00ff);
             if (!(dqm & 2)) v = (v & 0x00ff) | (dq_o & 0xff00);
             mem[w] = v;
+            if (on_write) on_write(w, dq_o, uint8_t(~dqm & 3));
             t_wr[ba] = cyc; writes++;
             break;
         }

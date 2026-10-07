@@ -4,6 +4,7 @@
 // MRA streams (docs/ROM_LAYOUT.md), hps_io WIDE=1 (16-bit words, byte addresses):
 //   index 1   board record "CRYS", version, game id, flash banks
 //   index 254 DIP switches (MRA <switches>), byte 0 = DSW
+//   index 3   protection PIC firmware (MAME image, 16-bit words) -> crystal_pic16 (Top Blade V, Office Yeoin)
 //   index 0   flash banks 0..n-1 (16 MiB each) -> DDR3 flash store, then the 128 KiB BIOS -> SDRAM 0x1800000
 // After the index-0 download the work/texture/frame RAM banks and the NVRAM area are cleared to 0 (MAME's RAM
 // default) before the board is released (`busy` low).
@@ -23,6 +24,9 @@ module crystal_loader (
     output reg   [3:0] flash_banks,
     output reg   [7:0] dsw,
     output reg         loaded,         // a ROM stream has been loaded since power-up
+    output wire        pic_we,         // PIC firmware word
+    output wire [13:0] pic_addr,
+    output wire [15:0] pic_data,
 
     // DDR3 flash store writes
     output reg         f_req,
@@ -45,6 +49,10 @@ module crystal_loader (
     reg  [1:0] st;                 // 0 idle/receive, 1 wait flash, 2 wait sdram word, 3 clear
     reg [23:0] clr_addr;
     reg [15:0] rec [0:7];
+
+    assign pic_we   = ioctl_download && ioctl_wr && ioctl_index == 16'd3;
+    assign pic_addr = ioctl_addr[14:1];
+    assign pic_data = ioctl_dout;
 
     wire [26:0] bios_base = {flash_banks, 24'd0};
     wire        is_flash  = ioctl_addr < bios_base;

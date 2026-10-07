@@ -9,6 +9,7 @@
 module vr0_sys (
     input  wire        clk,
     input  wire        rst_n,
+    input  wire        soc_ce,           // VRender0 clock enable (1 = clk_sys; Top Blade V: 95 of 102 clocks)
 
     input  wire        io_sel,
     input  wire        io_we,
@@ -173,7 +174,8 @@ module vr0_sys (
             geo_htot <= 10'd455; geo_vtot <= 10'd262; geo_hdisp <= 10'd320; geo_vdisp <= 10'd240; geo_tpp <= 5'd12;
             geo_hsw <= 8'd34; geo_hbp <= 8'd60; geo_vbp <= 8'd15;
         end else begin
-            // ---------------- timers
+            // ---------------- timers (VRender0 clocks)
+            if (soc_ce) begin
             tm_st1 <= 4'd0;
             tm_st2 <= tm_st1;
             for (i = 0; i < 4; i++) begin
@@ -190,12 +192,13 @@ module vr0_sys (
                         tm_left[i] <= left - 26'd1;
                 end
             end
+            end
 
             // ---------------- interrupt latch (masked requests are dropped, as MAME)
             intst <= intst | (req_all & inten);
 
             // ---------------- DMA engine (one unit at a time, channel 0 first)
-            for (i = 0; i < 2; i++) if (dma_wait[i] != 3'd0) dma_wait[i] <= dma_wait[i] - 3'd1;
+            if (soc_ce) for (i = 0; i < 2; i++) if (dma_wait[i] != 3'd0) dma_wait[i] <= dma_wait[i] - 3'd1;
             case (dma_ph)
             2'd0: begin
                 if (dma_ctrl[0][10] && dma_wait[0] == 3'd0) begin

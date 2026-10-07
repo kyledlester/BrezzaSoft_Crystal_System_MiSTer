@@ -11,7 +11,9 @@
 //   - all 240 lines, all 320 pixels, never on a sync; Off = the native stream on every clock.
 //   Run: scripts/sim/crt_test.sh
 `timescale 1ns/1ps
-module tb_crt;
+module tb_crt #(parameter WIDE = 0);   // WIDE = 1: Top Blade V geometry (360 pixels, HSync 387..420)
+    localparam [9:0] HD = WIDE ? 10'd360 : 10'd320;
+    localparam [9:0] HS0 = WIDE ? 10'd387 : 10'd361, HS1 = WIDE ? 10'd421 : 10'd395;
     reg clk = 1'b0;
     always #5.820 clk = ~clk;
     longint cyc = 0;
@@ -20,7 +22,7 @@ module tb_crt;
     initial begin repeat (4) @(posedge clk); rst_n = 1'b1; end
     wire ce_pix, hb0, vb0, hs0, vs0;
     wire [9:0] hcount, vcount;
-    crystal_raster vt (.clk(clk), .rst_n(rst_n), .htotal(10'd455), .hdisp(10'd320), .hs_start(10'd361), .hs_end(10'd395),
+    crystal_raster vt (.clk(clk), .rst_n(rst_n), .htotal(10'd455), .hdisp(HD), .hs_start(HS0), .hs_end(HS1),
         .vtotal(10'd262), .vdisp(10'd240), .vs_start(10'd244), .vs_end(10'd247), .div(6'd12),
         .ce_pix(ce_pix), .hcnt(hcount), .vcnt(vcount), .hblank(hb0), .vblank(vb0), .hsync(hs0), .vsync(vs0));
     // crystal_core: the scanout pixel and the timing signals are registered one pixel late
@@ -41,7 +43,7 @@ module tb_crt;
     wire signed [4:0] hsize_s; wire signed [3:0] hpos_s, vsh_s;
     crystal_crt_adjust dut (.clk_sys(clk), .ce_pix(ce_pix), .frame_event(frame_end),
         .osd_on(on), .osd_hsize(hsz), .osd_hpos(hp), .osd_vshift(vs), .sd_off(sd_off),
-        .vb_next((vcount == 10'd261) ? 1'b0 : (vcount >= 10'd239)),
+        .vb_next((vcount == 10'd261) ? 1'b0 : (vcount >= 10'd239)), .wide(WIDE != 0),
         .rgb_in(rgb), .hblank_in(hblank), .vblank_in(vblank), .hsync_in(hsync), .vsync_in(vsync),
         .ce_out(ce_o), .rgb_out(rgb_o), .hblank_out(hb_o), .vblank_out(vb_o), .hsync_out(hs_o), .vsync_out(vs_o),
         .active(act), .hsize_s(hsize_s), .hpos_s(hpos_s), .vsh_s(vsh_s));
@@ -167,7 +169,7 @@ module tb_crt;
         // every setting: the whole picture, in order, never on a sync
         checks++; if (lf_min != 240 || lf_max != 240) err($sformatf("%s: %0d..%0d lines per frame", tag, lf_min, lf_max));
         checks++; if (line_seq_bad) err($sformatf("%s: source lines out of sequence (%0d)", tag, line_seq_bad));
-        checks++; if (vis_min != 320) err($sformatf("%s: %0d of 320 pixels on some line", tag, vis_min));
+        checks++; if (vis_min != HD) err($sformatf("%s: %0d of %0d pixels on some line", tag, vis_min, HD));
         checks++; if (bp_min < 0 || fp_min < 0) err($sformatf("%s: content on the HSync (BP %0d FP %0d)", tag, bp_min, fp_min));
         checks++; if (vs_overlap) err($sformatf("%s: %0d content lines during VSync", tag, vs_overlap));
         $display("  %-26s on %0d H-Size %3d H-Pos %4d V-Shift %3d | pixels %3d(y%0d)..%3d  BP %3d  FP %3d  hold %0d..%0d  lines %0d  VS->first line %0d",
@@ -190,7 +192,7 @@ module tb_crt;
         nocrop_max = -99;
         for (int v = -12; v <= 10; v++) begin
             run_setting(1, hidx(v), 0, 0, 1, $sformatf("H-Size %0d", v), 0);
-            if (vis_min == 320 && v > nocrop_max) nocrop_max = v;
+            if (vis_min == HD && v > nocrop_max) nocrop_max = v;
         end
         // every H-Position at H-Size 0, -12, +10
         for (int s = 0; s < 5; s++) begin

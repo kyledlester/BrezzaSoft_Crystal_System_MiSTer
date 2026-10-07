@@ -147,7 +147,7 @@ crystal_pll pll (.refclk(CLK_50M), .rst(1'b0), .clk_sys(clk_sys), .locked(pll_lo
 
 ///////////////////////   CRYSTAL SYSTEM BOARD   ///////////////////////////
 
-wire        ce_pix, hblank, vblank, hsync, vsync, vb_next;
+wire        ce_pix, hblank, vblank, hsync, vsync, vb_next, vid_wide;
 // DDR3: flash store (core) and screen_rotate share the port (crystal_ddr_mux)
 wire        fl_busy, fl_rd, fl_we;
 wire  [7:0] fl_burstcnt, fl_be;
@@ -183,7 +183,7 @@ crystal_core core
 	.DDRAM_DOUT_READY(DDRAM_DOUT_READY), .DDRAM_RD(fl_rd), .DDRAM_DIN(fl_din), .DDRAM_BE(fl_be),
 	.DDRAM_WE(fl_we), .osd_flip(osd_flip),
 	.ce_pix(ce_pix), .r(core_r), .g(core_g), .b(core_b), .hblank(hblank), .vblank(vblank), .hsync(hsync),
-	.vsync(vsync), .vb_next(vb_next),
+	.vsync(vsync), .vb_next(vb_next), .vid_wide(vid_wide),
 	.audio_l(snd_l), .audio_r(snd_r),
 	.rom_loading(rom_loading), .cpu_running(cpu_running),
 	.dbg_retire(), .dbg_pc(), .dbg_illegal(), .dbg_underflows(), .dbg_cpu_state(), .dbg_render_pixels(),
@@ -215,6 +215,7 @@ crystal_crt_adjust crt_adjust
 	.osd_vshift(status[108:105]),
 	.sd_off((status[12:11] == 2'd0) && !forced_scandoubler),
 	.vb_next(vb_next),
+	.wide(vid_wide),
 	.rgb_in({core_r, core_g, core_b}),
 	.hblank_in(hblank),
 	.vblank_in(vblank),
@@ -232,7 +233,7 @@ crystal_crt_adjust crt_adjust
 	.vsh_s()
 );
 
-arcade_video #(.WIDTH(320), .DW(24), .GAMMA(1)) arcade_video
+arcade_video #(.WIDTH(360), .DW(24), .GAMMA(1)) arcade_video   // 320 (most games) or 360 (Top Blade V) wide
 (
 	.clk_video(clk_sys),
 	.ce_pix(av_ce),

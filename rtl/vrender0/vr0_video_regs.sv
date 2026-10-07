@@ -7,6 +7,7 @@
 module vr0_video_regs (
     input  wire        clk,
     input  wire        rst_n,
+    input  wire        soc_ce,           // VRender0 clock enable (1 = clk_sys; Top Blade V: 95 of 102 clocks)
 
     input  wire        io_sel,
     input  wire        io_we,
@@ -109,7 +110,7 @@ module vr0_video_regs (
             busy <= 1'b0; gap <= 16'd0;
             dbg_flip_defer <= 16'd0;
         end else begin
-            if (gap != 16'd0) gap <= gap - 16'd1;
+            if (gap != 16'd0 && soc_ce) gap <= gap - 16'd1;
             if (front_set) q_front <= front_set_val;
 
             // packet completion (MAME pipeline_cb after process_packet)

@@ -15,6 +15,7 @@ module vr0_sound #(
 ) (
     input  wire        clk,
     input  wire        rst_n,
+    input  wire        soc_ce,           // VRender0 clock enable (1 = clk_sys; Top Blade V: 95 of 102 clocks)
     input  wire        tick_in,
 
     // register file
@@ -139,8 +140,10 @@ module vr0_sound #(
         end else begin
             if (EXT_TICK) begin
                 if (tick_in) due <= 1'b1;
-            end else if (tick == SAMPLE_CLKS - 1) begin tick <= 11'd0; due <= 1'b1; end
-            else tick <= tick + 11'd1;
+            end else if (soc_ce) begin
+                if (tick == SAMPLE_CLKS - 1) begin tick <= 11'd0; due <= 1'b1; end
+                else tick <= tick + 11'd1;
+            end
 
             case (st)
             E_IDLE: if (due && !(EXT_TICK && tick_in)) begin

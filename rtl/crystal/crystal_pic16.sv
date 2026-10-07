@@ -158,7 +158,10 @@ module crystal_pic16 (
     endfunction
 
     // ------------------------------------------------------------------ sequencer
-    typedef enum logic [2:0] { P_IDLE, P_FETCH, P_DEC, P_RD, P_EXEC, P_EE, P_EE2 } pst_t;
+    typedef enum logic [3:0] { P_IDLE, P_FETCH, P_DEC, P_RD, P_OPND, P_EXEC, P_TMR, P_EE, P_EE2 } pst_t;
+    reg  [7:0] rv_q;              // operand (registered: timing)
+    reg  [2:0] tm_cyc;            // instruction cycles for the TMR0 update
+    reg        tm_wr, ee_rd_q;    // the instruction wrote TMR0 / started an EEPROM read
     pst_t st;
     reg  [8:0] fa;               // operand data address
     reg  [9:0] fmap;
@@ -240,7 +243,8 @@ module crystal_pic16 (
                 gpr_ra <= gpr_map(a) >> 0;
                 st   <= P_RD;
             end
-            P_RD: st <= P_EXEC;                             // data RAM read
+            P_RD: st <= P_OPND;                             // data RAM read
+            P_OPND: begin rv_q <= fmap[9] ? gpr_q : sfr_rd(fa); st <= P_EXEC; end
             P_EXEC: begin
                 // ---------------- execute one instruction (MAME pic16x8x_device op_*)
                 logic [7:0] rv, alu, st_new, wp, intc;
@@ -250,7 +254,7 @@ module crystal_pic16 (
                 logic [7:0] res;
                 logic [12:0] npc;
                 npc = pc;
-                rv = fmap[9] ? gpr_q : sfr_rd(fa);
+                rv = rv_q;
                 cyc_n = 3'd1; wr_f = 1'b0; wr_w = 1'b0; skip = 1'b0; alu_fl = 1'b0; res = 8'd0; alu = 8'd0;
                 ee_rd = 1'b0;
                 st_new = status;
@@ -415,47 +419,49 @@ module crystal_pic16 (
                 if (!fmap[9] && is_portb(fa) && !(op[13:7] == 7'd0) && g < 7'h40) portb_mm <= portb_rd & 8'hf0;
                 status <= st_new;
 
-                // ---------------- TMR0 (MAME update_timer with the internal clock)
-                begin
-                    logic [3:0] cnt;
-                    logic [8:0] div, ps;
-                    logic [8:0] nt;
-                    logic [2:0] dl;
-                    cnt = option[5] ? 4'd0 : {1'b0, cyc_n};
-                    dl = delay_timer;
-                    // a write to TMR0 in this instruction sets the delay above (overrides)
-                    if (!(wr_f && !fmap[9] && fa[6:0] == 7'h01 && (model_628 ? !fa[7] : !fa[7]))) begin
-                        if (dl != 3'd0) begin
-                            logic signed [4:0] c2;
-                            c2 = $signed({1'b0, cnt}) - $signed({2'b0, dl});
-                            delay_timer <= (dl > cyc_n) ? dl - cyc_n : 3'd0;
-                            cnt = (c2 > 0 && dl <= cyc_n) ? c2[3:0] : 4'd0;
-                        end
-                        if (cnt != 4'd0) begin
-                            if (!option[3]) begin
-                                div = 9'd2 << option[2:0];
-                                ps = {1'b0, prescaler} + {5'd0, cnt};
-                                if (ps >= div) begin
-                                    nt = {1'b0, tmr0} + 9'd1;     // counts <= 3 < div, so at most one increment
-                                    prescaler <= ps - div;
-                                    tmr0 <= nt[7:0];
-                                    if (nt[8]) intcon[2] <= 1'b1;
-                                end else prescaler <= ps[7:0];
-                            end else begin
-                                nt = {1'b0, tmr0} + {5'd0, cnt};
-                                tmr0 <= nt[7:0];
-                                if (nt[8]) intcon[2] <= 1'b1;
-                            end
-                        end
-                    end
-                end
-
+                tm_cyc  <= cyc_n;
+                tm_wr   <= wr_f && !fmap[9] && fa[6:0] == 7'h01 && !fa[7];
+                ee_rd_q <= ee_rd;
                 pc <= npc;
                 icyc <= cyc_n;
                 wait_cyc <= cyc_n[1:0] - 2'd1;
                 dbg_retire <= 1'b1;
                 dbg_count <= dbg_count + 32'd1;
-                st <= ee_rd ? P_EE : P_IDLE;
+                st <= P_TMR;
+            end
+            P_TMR: begin
+                // ---------------- TMR0 (MAME update_timer after the instruction, internal clock)
+                logic [3:0] cnt;
+                logic [8:0] div, ps;
+                logic [8:0] nt;
+                logic [2:0] dl;
+                cnt = option[5] ? 4'd0 : {1'b0, tm_cyc};
+                dl = delay_timer;
+                if (!tm_wr) begin                       // a TMR0 write set the delay instead
+                    if (dl != 3'd0) begin
+                        logic signed [4:0] c2;
+                        c2 = $signed({1'b0, cnt}) - $signed({2'b0, dl});
+                        delay_timer <= (dl > tm_cyc) ? dl - tm_cyc : 3'd0;
+                        cnt = (c2 > 0 && dl <= tm_cyc) ? c2[3:0] : 4'd0;
+                    end
+                    if (cnt != 4'd0) begin
+                        if (!option[3]) begin
+                            div = 9'd2 << option[2:0];
+                            ps = {1'b0, prescaler} + {5'd0, cnt};
+                            if (ps >= div) begin
+                                nt = {1'b0, tmr0} + 9'd1;     // counts <= 2 < 2 div: at most one increment
+                                prescaler <= ps - div;
+                                tmr0 <= nt[7:0];
+                                if (nt[8]) intcon[2] <= 1'b1;
+                            end else prescaler <= ps[7:0];
+                        end else begin
+                            nt = {1'b0, tmr0} + {5'd0, cnt};
+                            tmr0 <= nt[7:0];
+                            if (nt[8]) intcon[2] <= 1'b1;
+                        end
+                    end
+                end
+                st <= ee_rd_q ? P_EE : P_IDLE;
             end
             P_EE:  st <= P_EE2;                             // EEPROM read (address registered last clock)
             P_EE2: begin eedata <= ee_q; st <= P_IDLE; end

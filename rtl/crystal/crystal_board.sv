@@ -11,6 +11,13 @@ module crystal_board (
     input  wire        clk,
     input  wire        rst_n,
     input  wire        vid_rst_n,        // raster only: kept running through board reset / ROM download
+    input  wire        soc_ce,           // VRender0/CPU clock enable (Top Blade V: 95 of 102 clocks, else 1)
+    // protection PIC (Top Blade V: PIC16F628A, Office Yeoin Cheonha: PIC16F84A; others: none, MAME NO_DUMP)
+    input  wire        pic_en,
+    input  wire        pic_628,
+    input  wire        pic_ld_we,        // firmware image word (loader, index 3)
+    input  wire [13:0] pic_ld_addr,
+    input  wire [15:0] pic_ld_data,
 
     // configuration (MRA board record / OSD)
     input  wire  [3:0] flash_banks,       // populated 16 MiB flash banks
@@ -141,8 +148,8 @@ module crystal_board (
             pace   <= 3'd0;
         end else begin
             logic inc;
-            inc  = (pace == 3'd5);
-            pace <= inc ? 3'd0 : pace + 3'd1;
+            inc  = soc_ce && (pace == 3'd5);
+            if (soc_ce) pace <= inc ? 3'd0 : pace + 3'd1;
             case ({inc && credit < {1'b0, cpu_credit_max}, istart})
                 2'b10: credit <= credit + 7'd1;
                 2'b01: credit <= credit - 7'd1;
@@ -221,7 +228,11 @@ module crystal_board (
     reg   [3:0] mdr_be;
     reg  [31:0] mdr_wdata;
     wire [28:0] d_phys    = phys_of(d_addr, bank, flash_banks);
-    wire        d_direct  = (bs == B_IDLE) && d_req && !dma_req && d_phys[28] && d_addr[31:2] != 30'h01400000;
+    // the CPU's direct path; once a direct transaction has started it keeps the bus until its acknowledge (a DMA
+    // request arriving meanwhile must not take the bus away from a request the memory side is already serving)
+    reg         dir_busy;
+    wire        d_direct  = (bs == B_IDLE) && d_req && (dir_busy || !dma_req) && d_phys[28] && d_addr[31:2] != 30'h01400000;
+    always @(posedge clk) dir_busy <= rst_n && d_direct && !md_ack;
     assign md_req   = d_direct ? 1'b1 : mdr_req;
     assign md_we    = d_direct ? (d_we && (d_addr >= 32'h00020000) && !(d_addr >= 32'h05000000 && d_addr < 32'h06000000)) : mdr_we;
     assign md_addr  = d_direct ? {d_phys[27:2], 2'b00} : mdr_addr;
@@ -365,8 +376,28 @@ module crystal_board (
         .io_out(rtc_io), .rtc_load(rtc_load), .rtc_bcd(rtc_bcd)
     );
     // MAME master: PIC data line (b29) = !written b29 (undumped PIC never drives it)
-    reg pic_data;
-    always @(posedge clk) if (!rst_n) pic_data <= 1'b1; else if (pio_wr) pic_data <= !pio_wraw[29];
+    // PIC data line (MAME crystal.cpp): the CPU writes !PIO bit 29, the PIC drives it from port A bit 0 when that
+    // is an output; both read it back (PIO external data bit 29 / PIC port A bit 0). PIO bit 30 holds the PIC in
+    // reset. Without a PIC (crysking, evosocc: undumped in MAME) only the CPU writes it.
+    reg  pic_data, pic_rst;
+    wire pic_we;
+    wire [7:0] pic_val, pic_mask;
+    reg  [6:0] pic_div;                   // 3.579545 MHz / 4 = clk_sys / 96
+    wire pic_cyc = (pic_div == 7'd95);
+    always @(posedge clk) begin
+        pic_div <= pic_cyc ? 7'd0 : pic_div + 7'd1;
+        if (!rst_n) begin pic_data <= 1'b1; pic_rst <= 1'b0; end
+        else begin
+            if (pio_wr) begin pic_data <= !pio_wraw[29]; pic_rst <= pio_wraw[30]; end
+            if (pic_en && pic_we && pic_mask[0]) pic_data <= pic_val[0];
+        end
+    end
+    crystal_pic16 pic (
+        .clk(clk), .rst_n(rst_n), .model_628(pic_628), .hold(!pic_en || pic_rst), .cyc(pic_cyc),
+        .porta_in({7'd0, pic_data}), .porta_we(pic_we), .porta_val(pic_val), .porta_mask(pic_mask),
+        .ld_we(pic_ld_we), .ld_addr(pic_ld_addr), .ld_data(pic_ld_data),
+        .dbg_pc(), .dbg_w(), .dbg_status(), .dbg_retire(), .dbg_count()
+    );
     wire [31:0] pio_edat = {2'b00, pic_data, rtc_io, 28'd0};
 
     // ------------------------------------------------------------------ raster and vblank
@@ -412,7 +443,7 @@ module crystal_board (
                    | (32'd1 << 19) & {32{coin2_q && !in_system[5]}};
 
     vr0_sys sys (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(rst_n), .soc_ce(soc_ce),
         .io_sel(sys_sel), .io_we(b_we), .io_addr(io_dw), .io_be(b_be), .io_wdata(b_wdata), .io_rdata(sys_rdata),
         .irq_req(irq_req), .cpu_irq(cpu_irq), .irq_vector(irq_vector),
         .dma_req(dma_req), .dma_we(dma_we), .dma_addr(dma_addr), .dma_be(dma_be), .dma_wdata(dma_wdata),
@@ -430,7 +461,7 @@ module crystal_board (
     wire  [1:0] pkt_flip;
     wire [22:0] draw_dest;
     vr0_video_regs vregs (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(rst_n), .soc_ce(soc_ce),
         .io_sel(vid_sel), .io_we(b_we), .io_addr(b_addr[15:2]), .io_be(b_be), .io_wdata(b_wdata), .io_rdata(vid_rdata),
         .vblank_start(vblank_start), .vblank_irq(vid_vblank_irq),
         .pkt_start(pkt_start), .pkt_addr(pkt_addr), .pkt_done(pkt_done), .pkt_flip(pkt_flip),
@@ -468,7 +499,7 @@ module crystal_board (
         .touched(s_touched), .touch_clr(s_touch_clr)
     );
     vr0_sound sound (
-        .clk(clk), .rst_n(rst_n), .tick_in(1'b0),
+        .clk(clk), .rst_n(rst_n), .soc_ce(soc_ce), .tick_in(1'b0),
         .eng_addr(s_eng_addr), .eng_rdata(s_eng_rdata), .eng_we(s_eng_we), .eng_wdata(s_eng_wdata),
         .status(s_status), .int_mask(s_int_mask), .int_pend(s_int_pend), .max_chan(s_max_chan),
         .chan_clk_num(s_clk_num), .ctrl(s_ctrl), .eng_status_clr(s_st_clr), .eng_pend_set(s_pend_set),

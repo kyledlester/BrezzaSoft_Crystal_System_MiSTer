@@ -34,22 +34,30 @@ struct Port { int wait = -1; uint32_t addr = 0; int left = 0; bool active = fals
 
 int main(int argc, char **argv)
 {
-    std::string rom = "C:/Users/klest/Crystal_research/roms";
+    std::string rom = "C:/Users/klest/Crystal_research/roms", game = "crysking";
     int frames = 600, from_frame = 0;
     bool verbose = false;
     std::multimap<int, std::string> inputs;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--rom") rom = argv[++i];
+        else if (a == "--game") game = argv[++i];
         else if (a == "--frames") frames = atoi(argv[++i]);
         else if (a == "--from-frame") from_frame = atoi(argv[++i]);
         else if (a == "--verbose") verbose = true;
         else if (a == "--input") { std::string v = argv[++i]; inputs.emplace(atoi(v.c_str()), v.substr(v.find(':') + 1)); }
     }
     crystal::Board b;
-    b.load_bios(read_file(rom + "/mx27l1000.u14"));
+    b.cfg.game = game;
+    std::vector<std::string> files = {"bcsv0004f01.u1", "bcsv0004f02.u2", "bcsv0004f03.u3"};
+    std::string bios = rom + "/mx27l1000.u14", pic;
+    if (game == "evosocc") files = {"evosocc/bcsv0001u01", "evosocc/bcsv0001u02", "evosocc/bcsv0001u03"};
+    if (game == "topbladv") { files = {"topbladv/flash.u1"}; pic = rom + "/topbladv/top_blade_v_pic16c727.bin"; b.cfg.soc_num = 95; b.cfg.soc_den = 102; }
+    if (game == "officeye") { files = {"officeye/flash.u1", "officeye/flash.u2"}; bios = rom + "/officeye/bios.u14"; pic = rom + "/officeye/office_yeo_in_cheon_ha_pic16f84a.bin"; }
+    b.load_bios(read_file(bios));
+    if (!pic.empty()) b.load_pic(game == "topbladv" ? pic16::F628A : pic16::F84A, read_file(pic));
     std::vector<uint8_t> fl;
-    for (auto n : {"bcsv0004f01.u1", "bcsv0004f02.u2", "bcsv0004f03.u3"}) { auto v = read_file(rom + "/" + n); fl.insert(fl.end(), v.begin(), v.end()); }
+    for (auto &n : files) { auto v = read_file(rom + "/" + n); fl.insert(fl.end(), v.begin(), v.end()); }
     b.load_flash(fl);
     b.reset();
 

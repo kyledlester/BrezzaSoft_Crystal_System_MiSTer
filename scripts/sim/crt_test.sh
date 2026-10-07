@@ -3,10 +3,11 @@
 set -e
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 export PATH=/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH
-OUT=$ROOT/build/vl_crt
+WIDE=${WIDE:-0}
+OUT=$ROOT/build/vl_crt$WIDE
 mkdir -p "$OUT"; cd "$OUT"
 verilator --cc --exe --main --timing -O2 -Wno-fatal -Wno-WIDTH -Wno-CASEINCOMPLETE -Wno-UNOPTFLAT -Wno-LATCH -Wno-TIMESCALEMOD \
-  --top-module tb_crt -CFLAGS "-std=c++20" --Mdir obj \
+  --top-module tb_crt -GWIDE=$WIDE -CFLAGS "-std=c++20" --Mdir obj \
   "$ROOT/rtl/crystal/crystal_raster.sv" "$ROOT/rtl/vendor/crt_adjust.sv" "$ROOT/rtl/crystal/crystal_crt_adjust.sv" \
   "$ROOT/sim/video/tb_crt.sv" > verilate.log 2>&1 || { grep -E "%Error" verilate.log | head -30; exit 1; }
 cd obj

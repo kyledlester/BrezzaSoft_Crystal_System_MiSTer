@@ -37,7 +37,7 @@ module vr0_sound_top (
         .touched(touched), .touch_clr(touch_clr)
     );
     vr0_sound #(.EXT_TICK(1)) eng (
-        .clk(clk), .rst_n(rst_n), .tick_in(tick),
+        .clk(clk), .rst_n(rst_n), .soc_ce(1'b1), .tick_in(tick),
         .eng_addr(eng_addr), .eng_rdata(eng_rdata), .eng_we(eng_we), .eng_wdata(eng_wdata),
         .status(status), .int_mask(int_mask), .int_pend(int_pend), .max_chan(max_chan), .chan_clk_num(clk_num),
         .ctrl(ctrl), .eng_status_clr(st_clr), .eng_pend_set(pend_set), .irq(irq), .touched(touched),

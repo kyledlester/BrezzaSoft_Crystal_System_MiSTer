@@ -39,7 +39,7 @@ static uint32_t rnd() { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; ret
 
 int main(int argc, char **argv)
 {
-    std::string stream_dir;
+    std::string stream_dir, game = "crysking";
     uint64_t max_insns = 50000000ull, trace_from = UINT64_MAX, progress = 1000000;
     int max_frames = 1000000;
     int max_lat = 3;
@@ -54,6 +54,7 @@ int main(int argc, char **argv)
         else if (a == "--seed") rng ^= strtoull(argv[++i], nullptr, 0) * 0x9E3779B97F4A7C15ull;
         else if (a == "--max-lat") max_lat = atoi(argv[++i]);
         else if (a == "--io-trace") io_trace = true;
+        else if (a == "--game") game = argv[++i];
     }
     auto stream = read_file(stream_dir + "/index0.bin");
     size_t nbanks = (stream.size() - 0x20000) / 0x1000000;
@@ -61,9 +62,17 @@ int main(int argc, char **argv)
     std::vector<uint8_t> bios(stream.begin() + nbanks * 0x1000000, stream.end());
     {   // protection overlay (as rtl/crystal/crystal_prot_overlay.sv)
         auto w16 = [&](uint32_t a, uint16_t v) { flash[a] = v & 0xff; flash[a + 1] = v >> 8; };
-        w16(0x7bb6, 0xdf01); w16(0x7bb8, 0x9c00); w16(0x976a, 0x901c); w16(0x976c, 0x9001);
-        w16(0x8096, 0x90fc); w16(0x8098, 0x9001); w16(0x8a52, 0x4000); w16(0x8a54, 0x403c);
+        if (game == "crysking") {
+            w16(0x7bb6, 0xdf01); w16(0x7bb8, 0x9c00); w16(0x976a, 0x901c); w16(0x976c, 0x9001);
+            w16(0x8096, 0x90fc); w16(0x8098, 0x9001); w16(0x8a52, 0x4000); w16(0x8a54, 0x403c);
+        } else if (game == "evosocc") {
+            w16(0x297388e, 0x90fc); w16(0x2973890, 0x9001); w16(0x2971058, 0x907c); w16(0x2971060, 0x9001);
+            w16(0x2978036, 0x900c); w16(0x2978038, 0x8303); w16(0x2974ed0, 0x90fc); w16(0x2974ed2, 0x9001);
+        }
     }
+    const bool tbv = (game == "topbladv"), ofe = (game == "officeye");
+    std::vector<uint8_t> pic_img;
+    if (tbv || ofe) pic_img = read_file(stream_dir + "/index3.bin");
 
     // ---------------- RTL-side physical memories
     std::vector<uint8_t> sdram(32u << 20, 0);
@@ -106,8 +115,19 @@ int main(int argc, char **argv)
     top->in_dsw = 0xff;
     top->rtc_load = 0;
     top->rst_n = 0; top->vid_rst_n = 0;
+    top->soc_ce = 1;
+    top->pic_en = tbv || ofe;
+    top->pic_628 = tbv;
+    top->pic_ld_we = 0;
     top->clk = 0;
     for (int i = 0; i < 8; i++) { top->clk = 1; top->eval(); top->clk = 0; top->eval(); }
+    // PIC firmware (as the loader on index 3)
+    for (size_t wi = 0; wi * 2 + 1 < pic_img.size(); wi++) {
+        top->pic_ld_we = 1; top->pic_ld_addr = uint16_t(wi); top->pic_ld_data = uint16_t(pic_img[2 * wi] | (pic_img[2 * wi + 1] << 8));
+        top->clk = 1; top->eval(); top->clk = 0; top->eval();
+    }
+    top->pic_ld_we = 0;
+    int soc_acc = 0;   // Top Blade V: 95 VRender0 clocks per 102 (as crystal_core)
     top->rst_n = 1; top->vid_rst_n = 1;
 
     se3208::Cpu ref;
@@ -268,6 +288,7 @@ int main(int argc, char **argv)
         }
         // no ordered texture-write queue at board level: queue-front updates apply one clock later
         top->vq_front_set = top->vq_front_wr; top->vq_front_set_val = top->vq_front_wr_val; top->vq_empty = 1;
+        if (tbv) { if (soc_acc >= 7) { top->soc_ce = 1; soc_acc -= 7; } else { top->soc_ce = 0; soc_acc += 95; } }
         top->clk = 1;
         top->eval();
         if (pi.wait >= 0) { if (top->mi_ack) pi.wait = -1; else pi.wait--; }

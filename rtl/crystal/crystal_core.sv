@@ -69,12 +69,21 @@ module crystal_core (
     output wire [31:0] dbg_defer_state,
     output wire [15:0] dbg_texq_max,
     output wire        vb_next,          // vertical blank of the next raster line (CRT Adjust)
+    output wire        vid_wide,         // the CRTC shows more than 320 pixels (Top Blade V: 360)
     input  wire        osd_flip,         // OSD Orientation "Flipped": 180-degree turn in the scanout
     output wire        dbg_d_ack,
     output wire        dbg_d_we,
     output wire [31:0] dbg_d_addr,
     output wire  [3:0] dbg_d_be,
     output wire [31:0] dbg_d_data,
+    // board memory bus (CPU and DMA, after address translation): simulation monitors
+    output wire        dbg_m_req,
+    output wire        dbg_m_ack,
+    output wire        dbg_m_we,
+    output wire [27:0] dbg_m_addr,
+    output wire  [3:0] dbg_m_be,
+    output wire [31:0] dbg_m_wdata,
+    output wire [31:0] dbg_m_rdata,
     output wire [15:0] dbg_opcode,
     output wire        dbg_took_irq,
     output wire [31:0] dbg_sr,
@@ -97,12 +106,33 @@ module crystal_core (
     wire [23:0] ls_addr;
     wire  [5:0] ls_len;
     wire [15:0] ls_wdata;
+    wire        pic_ld_we;
+    wire [13:0] pic_ld_addr;
+    wire [15:0] pic_ld_data;
+
+    // ------------------------------------------------------------------ per-game board configuration (MRA game id)
+    //   1 The Crystal of Kings   (crysbios, 3 flash banks, protection overlay)
+    //   2 Evolution Soccer       (crysbios, 3 flash banks, protection overlay)
+    //   3 Top Blade V            (crysbios, 1 flash bank, PIC16F628A, VRender0/CPU at 14.318 MHz * 95/17 / 34)
+    //   4 Office Yeoin Cheonha   (own BIOS, 2 flash banks, PIC16F84A, 3 players x 3 buttons)
+    wire g_topbladv = (game_id == 8'd3);
+    wire g_officeye = (game_id == 8'd4);
+    // VRender0/CPU clock enable: Top Blade V programs its PLL for 80.013 MHz = 85.909 MHz * 95/102 (MAME
+    // topbladv machine); the screen keeps the 14.318 MHz crystal timing. 95 enables every 102 clocks, spread.
+    reg  [6:0] soc_acc = 7'd0;
+    reg        soc_ce = 1'b1;
+    always @(posedge clk_sys) begin
+        if (!g_topbladv) begin soc_ce <= 1'b1; soc_acc <= 7'd0; end
+        else if (soc_acc >= 7'd7) begin soc_ce <= 1'b1; soc_acc <= soc_acc - 7'd7; end
+        else begin soc_ce <= 1'b0; soc_acc <= soc_acc + 7'd95; end
+    end
 
     crystal_loader loader (
         .clk(clk_sys), .pll_locked(pll_locked),
         .ioctl_download(ioctl_download), .ioctl_index(ioctl_index), .ioctl_wr(ioctl_wr), .ioctl_addr(ioctl_addr),
         .ioctl_dout(ioctl_dout), .ioctl_wait(ld_wait),
         .busy(ld_busy), .game_id(game_id), .flash_banks(flash_banks), .dsw(dsw), .loaded(ld_loaded),
+        .pic_we(pic_ld_we), .pic_addr(pic_ld_addr), .pic_data(pic_ld_data),
         .f_req(lf_req), .f_addr(lf_addr), .f_data(lf_data), .f_be(lf_be), .f_ack(lf_ack),
         .s_req(ls_req), .s_addr(ls_addr), .s_len(ls_len), .s_wdata(ls_wdata), .s_wnext(ls_wnext), .s_done(ls_done)
     );
@@ -137,10 +167,39 @@ module crystal_core (
                  8'h00,
                  c[3], a[3], c[2], a[2], c[1], a[1], c[0], a[0]};
     endfunction
-    wire [31:0] in_p1p2 = pair(p1, p2);
-    wire [31:0] in_p3p4 = pair(p3, p4);
+    wire [31:0] std_p1p2 = pair(p1, p2);
+    wire [31:0] std_p3p4 = pair(p3, p4);
     // SYSTEM: b0-3 start1-4, b4 coin1, b5 coin2, b6 service1, b7 test (all active low)
-    wire  [7:0] in_system = ~{sw_test, joy0[10] | joy1[10], joy1[9], joy0[9], joy3[8], joy2[8], joy1[8], joy0[8]};
+    wire  [7:0] std_system = ~{sw_test, joy0[10] | joy1[10], joy1[9], joy0[9], joy3[8], joy2[8], joy1[8], joy0[8]};
+
+    // Office Yeoin Cheonha (MAME INPUT_PORTS officeye): three players with Red / Green / Blue (buttons 1-3);
+    // P1_P2 b0/b2/b4 P2 R/G/B, b6 start 2, b16/b18/b20 P1 R/G/B, b17/b19/b21 P3 R/G/B, b22 start 1,
+    // b23 start 3; SYSTEM starts unused.
+    wire [31:0] ofe_p1p2 = ~{8'h00,
+                             joy2[8], joy0[8], joy2[6], joy0[6], joy2[5], joy0[5], joy2[4], joy0[4],
+                             8'h00,
+                             1'b0, joy1[8], 1'b0, joy1[6], 1'b0, joy1[5], 1'b0, joy1[4]};
+    wire  [7:0] ofe_system = ~{sw_test, joy0[10] | joy1[10] | joy2[10], joy1[9] | joy2[9], joy0[9], 4'h0};
+
+    // Top Blade V (MAME INPUT_PORTS topbladv): two buttons per player, P3/P4 unused; SYSTEM b6 = test (service
+    // mode), b7 = service 1; coins are one-frame impulses (PORT_IMPULSE(1)).
+    reg  [1:0] coin_q = 2'b00;
+    reg [20:0] coin_t [0:1];
+    reg  [1:0] coin_imp = 2'b00;
+    always @(posedge clk_sys) begin
+        coin_q <= {joy1[9], joy0[9]};
+        for (int c = 0; c < 2; c++) begin
+            if ((c ? joy1[9] : joy0[9]) && !coin_q[c]) begin coin_imp[c] <= 1'b1; coin_t[c] <= 21'd1430520; end
+            else if (coin_t[c] != 21'd0) coin_t[c] <= coin_t[c] - 21'd1;
+            else coin_imp[c] <= 1'b0;
+        end
+    end
+    wire [31:0] tbv_p1p2 = std_p1p2 | 32'h000000f0;
+    wire  [7:0] tbv_system = ~{joy0[10] | joy1[10], sw_test, coin_imp[1], coin_imp[0], 2'b00, joy1[8], joy0[8]};
+
+    wire [31:0] in_p1p2   = g_officeye ? ofe_p1p2 : g_topbladv ? tbv_p1p2 : std_p1p2;
+    wire [31:0] in_p3p4   = (g_officeye || g_topbladv) ? 32'hffffffff : std_p3p4;
+    wire  [7:0] in_system = g_officeye ? ofe_system : g_topbladv ? tbv_system : std_system;
 
     // ------------------------------------------------------------------ board
     reg         rtc_load;
@@ -168,10 +227,13 @@ module crystal_core (
     wire [9:0]  hcnt, vcnt;
     // vertical blank of the line after the current one (CRT Adjust samples it after the HSync, see crystal_crt_adjust)
     assign vb_next = (vcnt == g_vtot - 10'd1) ? 1'b0 : (vcnt >= g_vdisp - 10'd1);
+    assign vid_wide = (g_hdisp > 10'd320);
     wire        hb0, vb0, hs0, vs0;
 
     crystal_board board (
-        .clk(clk_sys), .rst_n(board_rst_n), .vid_rst_n(vid_rst_n),
+        .clk(clk_sys), .rst_n(board_rst_n), .vid_rst_n(vid_rst_n), .soc_ce(soc_ce),
+        .pic_en(g_topbladv || g_officeye), .pic_628(g_topbladv),
+        .pic_ld_we(pic_ld_we), .pic_ld_addr(pic_ld_addr), .pic_ld_data(pic_ld_data),
         .flash_banks(flash_banks), .cpu_credit_max(6'd32), .cpu_turbo(cpu_turbo), .render_interval(16'd1100),
         .in_p1p2(in_p1p2), .in_p3p4(in_p3p4), .in_system(in_system), .in_dsw(dsw),
         .coin_counter(), .lamps(),
@@ -293,7 +355,7 @@ module crystal_core (
     wire        dc_ack, wb_busy;
     wire [31:0] dc_rdata;
     // ordered texture-RAM write queue in front of the D-cache (crystal_texq: why and how there)
-    wire        tq_req, tq_we, sd_ack;
+    wire        tq_req, tq_we, sd_ack, dc_idle;
     wire [24:0] tq_addr;
     wire  [3:0] tq_be;
     wire [31:0] tq_wdata;
@@ -301,7 +363,7 @@ module crystal_core (
         .clk(clk_sys), .rst_n(board_rst_n),
         .req(tq_req), .we(tq_we), .addr(tq_addr), .be(tq_be), .wdata(tq_wdata),
         .ack(dc_ack), .rdata(dc_rdata),
-        .inv(da_inv), .inv_addr(dc_inv_addr), .wb_busy(wb_busy),
+        .inv(da_inv), .inv_addr(dc_inv_addr), .wb_busy(wb_busy), .idle(dc_idle),
         .wr_done(dc_wr_done), .wr_done_addr(dc_wr_done_addr),
         .m_req(da_req), .m_we(da_we), .m_addr(da_addr), .m_len(da_len), .m_wdata(da_wdata16), .m_wbe(da_wbe2),
         .m_wnext(c_wnext[3]), .m_rvalid(c_rvalid[3]), .m_rdata(sd_rdata), .m_done(c_done[3])
@@ -313,7 +375,7 @@ module crystal_core (
         .clk(clk_sys), .rst_n(board_rst_n),
         .c_req(md_req && !md_addr[27] && !nv_sel), .c_we(md_we), .c_addr(md_addr[24:0]), .c_be(md_be), .c_wdata(md_wdata),
         .c_ack(sd_ack),
-        .d_req(tq_req), .d_we(tq_we), .d_addr(tq_addr), .d_be(tq_be), .d_wdata(tq_wdata), .d_ack(dc_ack),
+        .d_req(tq_req), .d_we(tq_we), .d_addr(tq_addr), .d_be(tq_be), .d_wdata(tq_wdata), .d_ack(dc_ack), .d_idle(dc_idle),
         .front_wr(vq_front_wr), .front_wr_val(vq_front_wr_val), .front_set(vq_front_set), .front_set_val(vq_front_set_val),
         .drain_ok(vq_drain_ok), .empty(vq_empty), .max_used(dbg_texq_max)
     );
@@ -329,6 +391,8 @@ module crystal_core (
     );
     assign md_ack   = md_addr[27] ? (md_we ? md_req : fr0_ack) : nv_sel ? nv_ack : sd_ack;
     assign md_rdata = md_addr[27] ? fr0_data : nv_sel ? nv_rdata : dc_rdata;
+    assign dbg_m_req = md_req; assign dbg_m_ack = md_ack; assign dbg_m_we = md_we; assign dbg_m_addr = md_addr;
+    assign dbg_m_be = md_be; assign dbg_m_wdata = md_wdata; assign dbg_m_rdata = md_rdata;
 
     // ------------------------------------------------------------------ scanout
     vr0_scanout scanout (
