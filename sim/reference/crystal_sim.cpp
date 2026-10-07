@@ -77,7 +77,7 @@ struct WavOut {
 
 int main(int argc, char **argv)
 {
-    std::string bios_path, out = ".", trace_spec, io_log, pkt_log, dma_log, wav_path;
+    std::string bios_path, out = ".", trace_spec, io_log, pkt_log, dma_log, wav_path, game = "crysking", pic_path;
     std::vector<std::string> flash_paths;
     int frames = 600, snap_every = 0;
     std::set<int> snap_at;
@@ -101,6 +101,8 @@ int main(int argc, char **argv)
         else if (a == "--dma-log") dma_log = next();
         else if (a == "--wav") wav_path = next();
         else if (a == "--pic289") pic289 = true;
+        else if (a == "--game") game = next();
+        else if (a == "--pic") pic_path = next();
         else if (a == "--stats") stats = true;
         else if (a == "--input") { std::string v = next(); input_events.emplace(atoi(v.c_str()), v.substr(v.find(':') + 1)); }
         else if (a == "--dump-ram") { std::string v = next(); dump_ram[atoi(v.c_str())] = v.substr(v.find(':') + 1); }
@@ -109,6 +111,12 @@ int main(int argc, char **argv)
     }
     Board b;
     b.cfg.pic_master = !pic289;
+    b.cfg.game = game;
+    if (game == "topbladv") { b.cfg.soc_num = 95; b.cfg.soc_den = 102; }   // VR0 at 14318180*95/17 (PLL 0x573c)
+    if (!pic_path.empty()) {
+        pic16::Model m = game == "topbladv" ? pic16::F628A : pic16::F84A;
+        if (!b.load_pic(m, read_file(pic_path))) { fprintf(stderr, "bad pic image\n"); return 2; }
+    }
     if (!b.load_bios(read_file(bios_path))) { fprintf(stderr, "bad bios\n"); return 2; }
     std::vector<uint8_t> flash;
     for (auto &p : flash_paths) { auto v = read_file(p); flash.insert(flash.end(), v.begin(), v.end()); }

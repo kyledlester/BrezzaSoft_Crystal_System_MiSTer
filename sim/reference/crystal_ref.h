@@ -12,6 +12,8 @@
 // Copyright (C) 2026 Kyle Lester for the restructuring. BSD-3-Clause, as the MAME sources it derives from.
 #pragma once
 #include "se3208_ref.h"
+#include "pic16_ref.h"
+#include <memory>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -29,8 +31,13 @@ constexpr uint32_t PIPE_TICKS = 1100;       // MAME vr0video pipeline timer: clo
 struct Config {
     bool pic_master = true;          // MAME master: PIO bit 29 reads !(written bit 29); 0.289: reads 0
     bool reset_patch = false;        // MAME-only test-menu reset workaround (category: MAME convenience)
-    bool crysking_patch = true;      // init_crysking() protection substitution
+    bool crysking_patch = true;      // init_crysking() protection substitution (game "crysking")
     int  bios = 0;                   // 0 = mx27l1000.u14, 1 = mx27l1000-alt.u14
+    // game: "crysking", "evosocc" (init_evosocc patches), "topbladv" (PIC16F628A, 80 MHz VR0), "officeye"
+    // (own BIOS, PIC16F84A). soc_num/soc_den = VR0 clock / 85.909080 MHz (topbladv: 95/102); the screen (pixel
+    // clock from the 14.318 MHz crystal), the PIC (3.579545 MHz) and the RTC run on the crystal.
+    std::string game = "crysking";
+    uint32_t soc_num = 1, soc_den = 1;
 };
 
 struct Inputs {
@@ -81,6 +88,13 @@ public:
     // ---- board state
     uint32_t bank = 0, maxbank = 0, flashcmd = 0xff, pio = 0;
     bool pic_data = true;
+    // protection PIC (topbladv, officeye): MAME pic16x8x; reset = PIO bit 30, data line shared with PIO bit 29
+    std::unique_ptr<pic16::Pic> pic;
+    bool pic_reset = false;
+    uint64_t pic_next = 0;           // master tick (85.909080 MHz) of the next PIC instruction cycle
+    bool load_pic(pic16::Model m, const std::vector<uint8_t> &image);
+    uint64_t v2m(uint64_t v) const { return v * cfg.soc_den / cfg.soc_num; }                       // VR0 -> master
+    uint64_t m2v(uint64_t m) const { return (m * cfg.soc_num + cfg.soc_den - 1) / cfg.soc_den; }   // master -> VR0
     uint8_t lamps[2] = {0, 0};
     uint8_t coin_counter = 0;
     void coin_insert(int chute) { int_req(chute ? 19 : 12); }

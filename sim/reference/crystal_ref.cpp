@@ -29,9 +29,21 @@ void Board::load_flash(const std::vector<uint8_t> &f)
 {
     flash = f;
     maxbank = uint32_t(flash.size() / 0x1000000);
-    if (cfg.crysking_patch && flash.size() >= 0x10000) {
+    auto w16 = [&](uint32_t a, uint16_t v) { if (a + 1 < flash.size()) { flash[a] = v & 0xff; flash[a + 1] = v >> 8; } };
+    if (cfg.game == "evosocc") {
+        // init_evosocc(): u16 words at 0x1000000 u16 units = byte 0x2000000 into the flash region
+        const uint32_t b = 0x2000000;
+        w16(b + 0x97388e, 0x90fc);  // PUSH R2..R7
+        w16(b + 0x973890, 0x9001);  // PUSH R0
+        w16(b + 0x971058, 0x907c);  // PUSH R2..R6
+        w16(b + 0x971060, 0x9001);  // PUSH R0
+        w16(b + 0x978036, 0x900c);  // PUSH R2-R3
+        w16(b + 0x978038, 0x8303);  // LD (%SP,0xC),R3
+        w16(b + 0x974ed0, 0x90fc);  // PUSH R7-R6-R5-R4-R3-R2
+        w16(b + 0x974ed2, 0x9001);  // PUSH R0
+    }
+    if (cfg.game == "crysking" && cfg.crysking_patch && flash.size() >= 0x10000) {
         // init_crysking(): u16 little-endian words written into the flash region (docs/PROTECTION.md)
-        auto w16 = [&](uint32_t a, uint16_t v) { flash[a] = v & 0xff; flash[a + 1] = v >> 8; };
         w16(0x7bb6, 0xdf01);
         w16(0x7bb8, 0x9c00);
         w16(0x976a, 0x901c);
@@ -41,6 +53,16 @@ void Board::load_flash(const std::vector<uint8_t> &f)
         w16(0x8a52, 0x4000);
         w16(0x8a54, 0x403c);
     }
+}
+
+bool Board::load_pic(pic16::Model m, const std::vector<uint8_t> &image)
+{
+    pic = std::make_unique<pic16::Pic>();
+    if (!pic->load(m, image)) { pic.reset(); return false; }
+    // crystal_state::pic_porta_r / pic_porta_w
+    pic->porta_in = [this]() -> uint8_t { return pic_data ? 1 : 0; };
+    pic->porta_out = [this](uint8_t d, uint8_t mask) { if (mask & 1) pic_data = d & 1; };
+    return true;
 }
 
 void Board::reset()
@@ -63,8 +85,11 @@ void Board::reset()
     next_pipe = PIPE_TICKS;
     scr_htot = 455; scr_vtot = 262; scr_hdisp = 320; scr_vdisp = 240; scr_tpp = 12;
     frame_start = 0;
-    next_vblank = uint64_t(scr_htot) * scr_vdisp * scr_tpp;
+    next_vblank = uint64_t(scr_htot) * scr_vdisp * scr_tpp;   // master ticks (screen runs on the crystal)
     next_sample = SOUND_TICKS;
+    pic_next = 0;
+    pic_reset = false;
+    if (pic) pic->reset();
     next_rtc = 85909080ull;
     cpu.reset();
 }
@@ -73,13 +98,13 @@ void Board::reset()
 
 int Board::vpos() const
 {
-    uint64_t t = now - frame_start;
+    uint64_t t = v2m(now) - frame_start;
     return int((t / scr_tpp) / scr_htot);
 }
 
 int Board::hpos() const
 {
-    uint64_t t = now - frame_start;
+    uint64_t t = v2m(now) - frame_start;
     return int((t / scr_tpp) % scr_htot);
 }
 
@@ -92,9 +117,9 @@ void Board::process_events()
         for (int i = 0; i < 4; i++) cand(tmr[i].fire, i);
         for (int i = 0; i < 2; i++) cand(dma[i].next, 4 + i);
         cand(next_pipe, 6);
-        cand(next_vblank, 7);
+        cand(m2v(next_vblank), 7);
         cand(next_sample, 8);
-        cand(next_rtc, 9);
+        cand(m2v(next_rtc), 9);
         if (t > now) return;
         switch (which) {
         case 0: case 1: case 2: case 3: {
@@ -138,6 +163,11 @@ void Board::step_insn()
     process_events();
     cpu.irq_line = int_line;
     cpu.step();
+    // protection PIC: one instruction cycle per 96 master ticks (3.579545 MHz / 4), interleaved with the CPU
+    if (pic) {
+        const uint64_t m = v2m(now);
+        while (pic_next <= m) pic_next += 96ull * (pic_reset ? 1 : pic->step());
+    }
     st.op[cpu.last_op]++;
     if (cpu.last_took_irq) { st.irqs++; st.irq_vectors[cpu.last_irq_vector]++; }
 }
@@ -1060,6 +1090,12 @@ void Board::sys_w32(uint32_t off, uint32_t data, uint32_t mask)
         rtc.io_w(dat);
         rtc.sclk_w(clk);
         if (cfg.pic_master) pic_data = !((data >> 29) & 1);
+        if (pic) {
+            // MAME: set_input_line(INPUT_LINE_RESET, bit 30): held in reset while set
+            bool r = (data >> 30) & 1;
+            if (r && !pic_reset) pic->reset();
+            pic_reset = r;
+        }
         pio = combine(pio, data, mask);
         return;
     }
