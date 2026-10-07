@@ -51,13 +51,13 @@ MAME `crystal` input layout. Map them in MiSTer's controller setup:
 
 | MiSTer | Crystal System |
 | --- | --- |
-| D-pad / stick | 8-way joystick (players 1-4 from joysticks 1-4) |
-| Button 1 (A) | Button 1 (attack) |
+| D-pad / stick | 8-way joystick (players 1-2 from joysticks 1-2) |
+| Button 1 (A) | Button 1 |
 | Button 2 (B) | Button 2 |
-| Button 3 (X) | Button 3 (magic) |
+| Button 3 (X) | Button 3 |
 | Button 4 (Y) | Button 4 |
 | Start | Start (per player) |
-| Coin (Select) | Coin 1 (player 1 joystick) / Coin 2 (player 2 joystick) |
+| Coin (Select) | Coin 1 |
 | Service (R) | Service 1 |
 
 The Crystal of Kings: A = attack, A+B = emergency avoidance, C (button 3) = magic.
