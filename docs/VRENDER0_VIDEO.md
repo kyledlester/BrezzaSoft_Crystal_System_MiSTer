@@ -69,8 +69,13 @@ How-to-Play fights, every few frames). MAME has drawn that list by then; the RTL
 CPU/DMA texture-RAM writes and the CPU's queue-front updates therefore go through one ordered queue in front of
 the D-cache: a texture write reaches SDRAM only when the renderer has caught up with the front it sees (idle with
 an empty queue, stopped at a flip-sync packet, or not started), and a front update reaches the renderer only after
-the writes queued before it. The CPU is not held up (writes are acknowledged when queued; it waits only on a full
-queue, 2,048 entries, or on a texture-RAM read with writes pending). The flip rule above also requires the queue to
+the writes queued before it. The CPU is not held up: writes are acknowledged when queued (it waits only on a full
+queue, 4,096 entries). Texture-RAM reads are tracked per 64-byte block (128 hashed pending counters): a read of a
+block with no queued write goes straight to the D-cache; otherwise a 1,024-dword direct-mapped forwarding shadow,
+into which every queued write merges its bytes, answers it when it holds the newest bytes asked for; only the
+remaining reads wait for the drain. Top Blade V and Office Yeoin Cheonha re-read texture lines they have just
+written; without forwarding those reads stalled the CPU until the renderer caught up (Top Blade V: 29 % of all
+clocks in attract mode), with it the stall is under 0.1 %. The flip rule above also requires the queue to
 be empty. Texture writes are snooped into the renderer's caches when they complete in SDRAM.
 
 **Renderer throughput:** the destination is written in 32-pixel segments; a finished segment is copied into a

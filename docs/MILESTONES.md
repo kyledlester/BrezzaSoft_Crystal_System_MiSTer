@@ -99,4 +99,15 @@ Result: boot, attract, coin/start, gameplay, controls and sound work. Findings a
 * CRT Adjust added (NA/NB menu and bits; `scripts/sim/crt_test.sh` 1,182 checks PASS).
 Quartus: timing met, clk_sys +0.556 ns, HDMI +0.449 ns, SDRAM_CLK +2.617 ns; 189 / 553 RAM blocks.
 
-## M23–M28 — TODO (after hardware feedback)
+## M23 — More Crystal System games: Evolution Soccer, Top Blade V, Office Yeoin Cheonha
+
+Per-game board configuration from the MRA (game id in the board record): evosocc protection words in the
+overlay; Top Blade V's 95/102 VRender0/CPU clock and 360-pixel mode (second CRT Adjust table); Office Yeoin
+Cheonha's own BIOS and 3-player inputs; the PIC16F84A/F628A protection microcontrollers run their firmware from
+the MRA (`crystal_pic16`, a MAME pic16x8x port, difftested per instruction). Verification: board lockstep
+50 M instructions per game, renderer difftest, full-core frame compares vs the reference model -- crysking
+361/361, evosocc 201/201, officeye 201/201 identical; topbladv 1--2-frame timing shifts and RNG variants only.
+Texture queue: per-block read tracking and a forwarding shadow (K19) remove CPU stalls on re-read textures
+(Top Blade V +38 % CPU throughput in attract). Quartus: timing met at every corner.
+
+## M24–M28 — TODO (after hardware feedback)

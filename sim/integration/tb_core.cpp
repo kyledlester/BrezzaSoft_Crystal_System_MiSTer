@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <deque>
 #include <fstream>
 #include <map>
@@ -128,6 +129,13 @@ int main(int argc, char **argv)
     auto ring_add = [&](TR r) { ring.push_back(r); if (ring.size() > 160) ring.pop_front(); };
     bool ring_dumped = false;
     bool mon_on = false;
+    uint64_t bus_wait[5][2] = {}, bus_cnt[5][2] = {};
+    uint64_t trw[4] = {};
+    uint64_t texrd_ok = 0, texrd_bad = 0;
+    uint64_t hash_hit[7] = {};
+    static uint32_t sh_tag[2][4096]; static uint8_t sh_mask[2][4096]; uint64_t sh_srv[2] = {};
+    for (int k = 0; k < 2; k++) for (int i = 0; i < 4096; i++) sh_tag[k][i] = ~0u;
+    uint64_t texrd_pend = 0, texrd_free = 0; std::map<uint32_t, uint64_t> texrd_hist;
     int *cur_frame = nullptr; uint64_t *cur_cyc = nullptr;                  // after the board left reset (the loader clears the RAM before)
     sd.on_write = [&](uint32_t w, uint16_t d, uint8_t lanes) {
         if (!mon_on || w < 0x400000 || w >= 0x800000) return;
@@ -265,6 +273,66 @@ int main(int argc, char **argv)
         }
         st_hist[t->dbg_cpu_state & 31]++;
         if (t->cpu_running) mon_on = true;
+        if (t->dbg_m_req && !t->dbg_m_ack && mon_on) {
+            uint32_t pa = t->dbg_m_addr;
+            int reg = (pa & 0x8000000) ? 0 : 1 + int((pa >> 23) & 3);            // 0 flash, 1 work, 2 tex, 3 frame, 4 bios/nvram
+            bus_wait[reg][t->dbg_m_we ? 1 : 0]++;
+            if (reg == 2 && !t->dbg_m_we) {   // texture read waiting: why?
+                if (t->dbg_tq_state & 2) trw[0]++;            // blocked by a queued write to its block
+                else if (t->dbg_tq_state & 4) trw[1]++;       // the queue is writing to the D-cache
+                else if (!t->dbg_dc_idle) trw[2]++;           // D-cache busy (its own transaction / write FIFO)
+                else trw[3]++;
+            }
+        }
+        static bool m_req_q = false; static uint32_t m_addr_q = 0;
+        bool m_start = t->dbg_m_req && (!m_req_q || t->dbg_m_addr != m_addr_q);
+        m_req_q = t->dbg_m_req && !t->dbg_m_ack; m_addr_q = t->dbg_m_addr;
+        if (m_start && mon_on && !t->dbg_m_we && !(t->dbg_m_addr & 0x8000000) && ((t->dbg_m_addr >> 23) & 3) == 1) {
+            // texture read: is any write to the same dword still on its way to the SDRAM?
+            uint32_t w = (t->dbg_m_addr & 0x1fffffc) >> 1;
+            bool pend = false;
+            for (auto &e : tex_exp) if ((e.w & ~1u) == w) { pend = true; break; }
+            (pend ? texrd_pend : texrd_free)++;
+            {   // would a hashed per-bucket pending check block this read? (texq design study)
+                auto fold = [](uint32_t v, int b) { uint32_t r = 0; while (v) { r ^= v & ((1u << b) - 1); v >>= b; } return r; };
+                uint32_t ra = w << 1; bool hit[7] = {};
+                for (auto &e : tex_exp) {
+                    uint32_t wa = e.w << 1;
+                    hit[0] |= ((wa >> 6) & 127) == ((ra >> 6) & 127);
+                    hit[1] |= ((wa >> 6) & 1023) == ((ra >> 6) & 1023);
+                    hit[2] |= ((wa >> 4) & 1023) == ((ra >> 4) & 1023);
+                    hit[3] |= fold(wa >> 6, 7) == fold(ra >> 6, 7);
+                    hit[4] |= fold(wa >> 4, 10) == fold(ra >> 4, 10);
+                    hit[5] |= (wa >> 6) == (ra >> 6);
+                    hit[6] |= (wa >> 11) == (ra >> 11);
+                }
+                for (int k = 0; k < 7; k++) hash_hit[k] += hit[k];
+                if (hit[5]) {   // blocked: could a direct-mapped shadow of queued writes answer it?
+                    uint32_t dw = ra >> 2;
+                    for (int k = 0; k < 2; k++) {
+                        uint32_t i = dw & (k ? 4095 : 1023);
+                        if (sh_tag[k][i] == dw && (sh_mask[k][i] & t->dbg_m_be) == t->dbg_m_be) sh_srv[k]++;
+                    }
+                }
+            }
+            texrd_hist[(t->dbg_m_addr >> 12) & 0x7ff]++;
+        }
+        if (t->dbg_m_ack && mon_on && !t->dbg_m_we && !(t->dbg_m_addr & 0x8000000) && ((t->dbg_m_addr >> 23) & 3) == 1) {
+            // texture read data: the SDRAM contents with the still-queued writes applied in order
+            uint32_t w0 = (t->dbg_m_addr & 0x1fffffc) >> 1, exp = 0;
+            for (int h = 0; h < 2; h++) {
+                uint16_t v = sd.mem[w0 + h];
+                for (auto &e : tex_exp) if (e.w == w0 + h) {
+                    if (e.lanes & 1) v = (v & 0xff00) | (e.d & 0x00ff);
+                    if (e.lanes & 2) v = (v & 0x00ff) | (e.d & 0xff00);
+                }
+                exp |= uint32_t(v) << (16 * h);
+            }
+            uint32_t m = 0; for (int b = 0; b < 4; b++) if (t->dbg_m_be >> b & 1) m |= 0xffu << (8 * b);
+            if ((t->dbg_m_rdata & m) != (exp & m)) { if (texrd_bad++ < 10) printf("TEXREAD %07x be %x got %08x want %08x\n", t->dbg_m_addr, t->dbg_m_be, t->dbg_m_rdata, exp); }
+            else texrd_ok++;
+        }
+        if (t->dbg_m_ack && mon_on) { uint32_t pa = t->dbg_m_addr; int reg = (pa & 0x8000000) ? 0 : 1 + int((pa >> 23) & 3); bus_cnt[reg][t->dbg_m_we ? 1 : 0]++; }
         if (t->dbg_m_ack) {
             uint32_t pa = t->dbg_m_addr;
             if (t->dbg_m_we && !(pa & 0x8000000) && ((pa >> 23) & 3) == 1) {
@@ -275,6 +343,10 @@ int main(int argc, char **argv)
                       printf("  BUS W %06x be %x data %08x cyc %llu\n", w, be, t->dbg_m_wdata, (unsigned long long)cyc); }
                 ring_add({cyc, 'B', w, t->dbg_m_wdata, be});
                 ring_add({cyc, t->dbg_m_req ? 'r' : '!', pa, 0, 0});
+                for (int k = 0; k < 2; k++) {
+                    uint32_t dw = pa >> 2 & 0x7fffff, i = dw & (k ? 4095 : 1023);
+                    if (sh_tag[k][i] == dw) sh_mask[k][i] |= be; else { sh_tag[k][i] = dw; sh_mask[k][i] = be; }
+                }
                 if (be & 3)  tex_exp.push_back({w,     uint16_t(t->dbg_m_wdata),       uint8_t(be & 3)});
                 if (be & 12) tex_exp.push_back({w + 1, uint16_t(t->dbg_m_wdata >> 16), uint8_t((be >> 2) & 3)});
             }
@@ -364,7 +436,26 @@ int main(int argc, char **argv)
     printf("bus monitors: flash reads %llu ok / %llu bad, texture writes %llu ok / %llu bad (%zu still queued)\n",
            (unsigned long long)flash_rd_ok, (unsigned long long)flash_rd_bad, (unsigned long long)tex_ok,
            (unsigned long long)tex_bad, tex_exp.size());
-    bool ok = sd.violations == 0 && illegal == 0 && flash_rd_bad == 0 && tex_bad == 0;
+    {
+        const char *rn[5] = {"flash", "work RAM", "texture", "frame", "BIOS/NVRAM"};
+        printf("texture reads: %llu to a dword with a write still queued, %llu to others; busiest 4 KiB pages:", (unsigned long long)texrd_pend, (unsigned long long)texrd_free);
+        { std::vector<std::pair<uint64_t, uint32_t>> v; for (auto &kv : texrd_hist) v.push_back({kv.second, kv.first});
+          std::sort(v.rbegin(), v.rend()); for (size_t i = 0; i < v.size() && i < 6; i++) printf(" %05x000:%llu", v[i].second, (unsigned long long)v[i].first); }
+        printf("\n");
+        printf("texq hash study (reads blocked): 64B%%128 %llu, 64B%%1024 %llu, 16B%%1024 %llu, 64B fold7 %llu, 16B fold10 %llu, 64B exact %llu, 2KB line exact %llu\n",
+               (unsigned long long)hash_hit[0], (unsigned long long)hash_hit[1], (unsigned long long)hash_hit[2], (unsigned long long)hash_hit[3],
+               (unsigned long long)hash_hit[4], (unsigned long long)hash_hit[5], (unsigned long long)hash_hit[6]);
+        printf("texq shadow study: of %llu blocked reads, a 1K-dword shadow serves %llu, a 4K-dword shadow %llu\n",
+               (unsigned long long)hash_hit[5], (unsigned long long)sh_srv[0], (unsigned long long)sh_srv[1]);
+        printf("texture read wait cycles: blocked by queued write %llu, queue writing %llu, D-cache busy %llu, other %llu\n",
+               (unsigned long long)trw[0], (unsigned long long)trw[1], (unsigned long long)trw[2], (unsigned long long)trw[3]);
+        printf("bus profile (accesses / wait cycles):");
+        for (int r = 0; r < 5; r++) printf(" %s rd %llu/%llu wr %llu/%llu;", rn[r], (unsigned long long)bus_cnt[r][0],
+                                            (unsigned long long)bus_wait[r][0], (unsigned long long)bus_cnt[r][1], (unsigned long long)bus_wait[r][1]);
+        printf("\n");
+    }
+    printf("texture read data: %llu ok / %llu bad\n", (unsigned long long)texrd_ok, (unsigned long long)texrd_bad);
+    bool ok = sd.violations == 0 && illegal == 0 && flash_rd_bad == 0 && tex_bad == 0 && texrd_bad == 0;
     {
         uint64_t tot = 0;
         for (int i = 0; i < 16; i++) tot += st_hist[i];

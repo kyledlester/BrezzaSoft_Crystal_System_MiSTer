@@ -47,7 +47,7 @@ enables or counters derived from it:
 | 0 | `vr0_scanout` | 32-word bursts, one display line ahead (line buffer 2 x 1024 x 16) |
 | 1 | `vr0_sound` | one word per active voice per 44.19 kHz sample |
 | 2 | `crystal_icache` (8 KiB, banks 0/3) | 8-word line fills, uncached single words elsewhere |
-| 3 | `crystal_texq` (ordered texture-write queue, 2,048 entries) -> `crystal_dcache` (8 KiB write-through, banks 0/3) + 8-entry posted-write FIFO | line fills, posted/synchronous writes; texture writes released in display-list order |
+| 3 | `crystal_texq` (ordered texture-write queue, 4,096 entries, read forwarding) -> `crystal_dcache` (8 KiB write-through, banks 0/3) + 8-entry posted-write FIFO | line fills, posted/synchronous writes; texture writes released in display-list order |
 | 4 | `vr0_render` texture reads | 32-word packets, 32-word palette bursts, 16-word cache lines |
 | 5 | `vr0_render` frame reads | 32-word segments (alpha blending only) |
 | 6 | `vr0_render` frame writes | 32-word masked segment write-backs |

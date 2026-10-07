@@ -77,6 +77,8 @@ module crystal_core (
     output wire  [3:0] dbg_d_be,
     output wire [31:0] dbg_d_data,
     // board memory bus (CPU and DMA, after address translation): simulation monitors
+    output wire  [2:0] dbg_tq_state,
+    output wire        dbg_dc_idle,
     output wire        dbg_m_req,
     output wire        dbg_m_ack,
     output wire        dbg_m_we,
@@ -358,7 +360,8 @@ module crystal_core (
     wire        tq_req, tq_we, sd_ack, dc_idle;
     wire [24:0] tq_addr;
     wire  [3:0] tq_be;
-    wire [31:0] tq_wdata;
+    wire [31:0] tq_wdata, tq_fwd_data;
+    wire        tq_fwd;
     crystal_dcache dcache (
         .clk(clk_sys), .rst_n(board_rst_n),
         .req(tq_req), .we(tq_we), .addr(tq_addr), .be(tq_be), .wdata(tq_wdata),
@@ -374,10 +377,10 @@ module crystal_core (
     crystal_texq texq (
         .clk(clk_sys), .rst_n(board_rst_n),
         .c_req(md_req && !md_addr[27] && !nv_sel), .c_we(md_we), .c_addr(md_addr[24:0]), .c_be(md_be), .c_wdata(md_wdata),
-        .c_ack(sd_ack),
+        .c_ack(sd_ack), .c_fwd(tq_fwd), .c_fwd_data(tq_fwd_data),
         .d_req(tq_req), .d_we(tq_we), .d_addr(tq_addr), .d_be(tq_be), .d_wdata(tq_wdata), .d_ack(dc_ack), .d_idle(dc_idle),
         .front_wr(vq_front_wr), .front_wr_val(vq_front_wr_val), .front_set(vq_front_set), .front_set_val(vq_front_set_val),
-        .drain_ok(vq_drain_ok), .empty(vq_empty), .max_used(dbg_texq_max)
+        .drain_ok(vq_drain_ok), .empty(vq_empty), .max_used(dbg_texq_max), .dbg_state(dbg_tq_state)
     );
     wire        nv_ack;
     wire [31:0] nv_rdata;
@@ -390,7 +393,8 @@ module crystal_core (
         .ioctl_wait(nv_wait), .upload_req(ioctl_upload_req)
     );
     assign md_ack   = md_addr[27] ? (md_we ? md_req : fr0_ack) : nv_sel ? nv_ack : sd_ack;
-    assign md_rdata = md_addr[27] ? fr0_data : nv_sel ? nv_rdata : dc_rdata;
+    assign md_rdata = md_addr[27] ? fr0_data : nv_sel ? nv_rdata : tq_fwd ? tq_fwd_data : dc_rdata;
+    assign dbg_dc_idle = dc_idle;
     assign dbg_m_req = md_req; assign dbg_m_ack = md_ack; assign dbg_m_we = md_we; assign dbg_m_addr = md_addr;
     assign dbg_m_be = md_be; assign dbg_m_wdata = md_wdata; assign dbg_m_rdata = md_rdata;
 
