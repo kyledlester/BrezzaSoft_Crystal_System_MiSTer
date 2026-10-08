@@ -93,8 +93,6 @@ The Crystal of Kings: A = attack, A+B = emergency avoidance, C (button 3) = magi
   The sync never changes, so the CRT keeps its lock while adjusting; Off is a true
   bypass.
 * **Test switch (SW3)**: enters the BIOS/game test menu.
-* **CPU speed**: *MAME (14.3 MIPS)* (default) reproduces MAME's SE3208 rate;
-  *Unlimited* removes the pacing (diagnostic only).
 * **Stereo mix**, **Reset**.
 
 ## Accuracy
