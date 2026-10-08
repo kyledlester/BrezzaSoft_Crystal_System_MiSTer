@@ -9,7 +9,7 @@ One core (`Crystal`) is written for the whole board; each game has its own MRA.
 
 I created this core because I wanted to play these games on my MiSTer FPGA. I am posting it here and open sourcing it for everyone to enjoy and give feedback/make improvements. This core was created with the assistance of AI tooling.
 
-**Status: beta.** The Crystal of Kings boots, runs its attract mode and is playable
+**Status: beta.** All four games boot, run their attract modes and are playable
 on real MiSTer hardware, with sound, controls, DIP switches, NVRAM saves, HDMI and
 15 kHz CRT output, OSD orientation, and CRT adjustment tools.
 
