@@ -25,7 +25,7 @@
     <rotation>horizontal</rotation>
     <platform>BrezzaSoft Crystal System</platform>
     <category>Puzzle / Party</category>
-    <buttons names="Red,Green,Blue,Unused,Start,Coin,Service" default="A,B,X,Y,Start,Select,R"/>
+    <buttons names="Red,Green,Blue,-,Start,Coin,Service" default="A,B,X,Start,Select,R"/>
 
     <switches default="FF" base="16">
         <dip bits="0" name="Pause" ids="On,Off"/>
