@@ -37,9 +37,9 @@ ROMs are not included. You must supply your own.
 | Game | MAME set | Year | Genre | Board | Status |
 | --- | --- | --- | --- | --- | --- |
 | The Crystal of Kings | `crysking` | 2001 | Hack and slash | Crystal System (AMG0110B BIOS) | Playable on hardware |
-| Evolution Soccer | `evosocc` | 2001 | Soccer | Crystal System (AMG0110B BIOS) | New: verified in simulation, hardware test pending |
-| Top Blade V | `topbladv` | 2003 | Spinning-top battle | Crystal System, PIC16F628A protection, 80 MHz VRender0 | New: verified in simulation, hardware test pending |
-| Office Yeoin Cheonha (version 1.2) | `officeye` | 2001 | Party / reaction (3 players) | Crystal System hardware, own BIOS, PIC16F84A protection | New: verified in simulation, hardware test pending |
+| Evolution Soccer | `evosocc` | 2001 | Soccer | Crystal System (AMG0110B BIOS) | Playable on hardware |
+| Top Blade V | `topbladv` | 2003 | Spinning-top battle | Crystal System, PIC16F628A protection, 80 MHz VRender0 | Playable on hardware |
+| Office Yeoin Cheonha (version 1.2) | `officeye` | 2001 | Party / reaction (3 players) | Crystal System hardware, own BIOS, PIC16F84A protection | Playable on hardware |
 
 The protection microcontrollers of Top Blade V and Office Yeoin Cheonha are dumped (MAME), so the core runs
 their firmware on a PIC16 core of its own; The Crystal of Kings and Evolution Soccer use MAME's protection
