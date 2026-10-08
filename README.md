@@ -55,22 +55,20 @@ These use the same core and the same game, with a different ROM set.
 
 ## Controls
 
-MAME `crystal` input layout. Map them in MiSTer's controller setup:
+Each game uses MAME's input layout. Joystick 1 is player 1, joystick 2 is player 2 (joystick 3 is player 3 in
+Office Yeoin Cheonha). Map the buttons in MiSTer's controller setup; buttons a game does not use are not offered.
 
-| MiSTer | Crystal System |
-| --- | --- |
-| D-pad / stick | 8-way joystick (players 1-2 from joysticks 1-2) |
-| Button 1 (A) | Button 1 |
-| Button 2 (B) | Button 2 |
-| Button 3 (X) | Button 3 |
-| Button 4 (Y) | Button 4 |
-| Start | Start (per player) |
-| Coin (Select) | Coin 1 |
-| Service (R) | Service 1 |
-
-Game-specific layouts (MAME): **Top Blade V** uses buttons 1-2 for players 1-2. **Office Yeoin Cheonha** is a
-three-player game with three coloured buttons each: Button 1 = Red, Button 2 = Green, Button 3 = Blue, Start
-per player (players 1-3 from joysticks 1-3).
+| MiSTer | The Crystal of Kings, Evolution Soccer | Top Blade V | Office Yeoin Cheonha |
+| --- | --- | --- | --- |
+| Players | 2 | 2 | 3 |
+| D-pad / stick | 8-way joystick | 8-way joystick | (not used) |
+| Button 1 (A) | Button 1 | Button 1 | Red |
+| Button 2 (B) | Button 2 | Button 2 | Green |
+| Button 3 (X) | Button 3 | (not used) | Blue |
+| Button 4 (Y) | Button 4 | (not used) | (not used) |
+| Start | Start (each player) | Start (each player) | Start (each player) |
+| Coin (Select) | Coin 1 (joystick 1) / Coin 2 (joystick 2) | Coin 1 (joystick 1) / Coin 2 (joystick 2) | Coin 1 (joystick 1) / Coin 2 (joysticks 2-3) |
+| Service (R) | Service 1 | Service 1 | Service 1 |
 
 The Crystal of Kings: A = attack, A+B = emergency avoidance, C (button 3) = magic.
 
