@@ -104,6 +104,10 @@ module crystal_core (
     wire [26:0] lf_addr;
     wire [63:0] lf_data;
     wire  [7:0] lf_be;
+    wire        lr_req;                     // fast load: BIOS read from the DDR3 flash store (board in reset)
+    wire [26:0] lr_addr;
+    wire        fr0_ack;                    // flash store port 0 (CPU data/DMA, or the loader)
+    wire [31:0] fr0_data;
     wire        ls_req, ls_wnext, ls_done;
     wire [23:0] ls_addr;
     wire  [5:0] ls_len;
@@ -135,6 +139,7 @@ module crystal_core (
         .ioctl_dout(ioctl_dout), .ioctl_wait(ld_wait),
         .busy(ld_busy), .game_id(game_id), .flash_banks(flash_banks), .dsw(dsw), .loaded(ld_loaded),
         .pic_we(pic_ld_we), .pic_addr(pic_ld_addr), .pic_data(pic_ld_data),
+        .r_req(lr_req), .r_addr(lr_addr), .r_ack(fr0_ack), .r_data(fr0_data),
         .f_req(lf_req), .f_addr(lf_addr), .f_data(lf_data), .f_be(lf_be), .f_ack(lf_ack),
         .s_req(ls_req), .s_addr(ls_addr), .s_len(ls_len), .s_wdata(ls_wdata), .s_wnext(ls_wnext), .s_done(ls_done)
     );
@@ -328,12 +333,12 @@ module crystal_core (
 `endif
 
     // ---- flash store (DDR3)
-    wire        fr0_ack, fr1_ack;
-    wire [31:0] fr0_data;
+    wire        fr1_ack;
     wire [15:0] fr1_data;
     crystal_flash_ddr flash (
         .clk(clk_sys), .rst_n(pll_locked),
-        .r0_req(md_req && md_addr[27] && !md_we), .r0_addr(md_addr[26:0]), .r0_ack(fr0_ack), .r0_data(fr0_data),
+        .r0_req((md_req && md_addr[27] && !md_we) || lr_req), .r0_addr(lr_req ? lr_addr : md_addr[26:0]),
+        .r0_ack(fr0_ack), .r0_data(fr0_data),
         .r1_req(mi_req && mi_addr[27]), .r1_addr(mi_addr[26:0]), .r1_ack(fr1_ack), .r1_data(fr1_data),
         .w_req(lf_req), .w_addr(lf_addr), .w_data(lf_data), .w_be(lf_be), .w_ack(lf_ack),
         .DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT), .DDRAM_ADDR(DDRAM_ADDR), .DDRAM_DOUT(DDRAM_DOUT),

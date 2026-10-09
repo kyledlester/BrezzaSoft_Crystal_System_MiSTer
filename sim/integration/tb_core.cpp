@@ -85,6 +85,7 @@ int main(int argc, char **argv)
     int line_w = 320;                     // active pixels per line (320; Top Blade V 360)
     int dsw = -1;                         // >= 0: send the DIP switches on index 254 after the ROM download (as MiSTer)
     std::string wav;
+    bool fast = false;                    // fast ROM load: the stream goes straight into DDR3 (MRA address=0x32000000)
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto nx = [&]() { return std::string(argv[++i]); };
@@ -99,6 +100,7 @@ int main(int argc, char **argv)
         else if (a == "--dump-tex") { std::string v = nx(); dump_tex_frame = atoi(v.c_str()); dump_tex_file = v.substr(v.find(':') + 1); }
         else if (a == "--dsw") dsw = (int)strtol(nx().c_str(), nullptr, 16);
         else if (a == "--wav") wav = nx();
+        else if (a == "--fast") fast = true;
     }
     FILE *fw = wav.empty() ? nullptr : fopen(wav.c_str(), "wb");
     if (fw) { uint8_t h[44] = {}; fwrite(h, 1, 44, fw); }
@@ -206,7 +208,23 @@ int main(int argc, char **argv)
     for (int i = 0; i < 12000; i++) tick();
     download(1, s1);
     if (!s3.empty()) { download(3, s3); printf("PIC firmware sent on index 3: %zu bytes\n", s3.size()); }
-    download(0, s0);
+    if (fast) {
+        // as Main_MiSTer's rom_finish() with an address: set_download(1, len) (ioctl_addr = len), shmem_put into
+        // DDR3, set_download(0) -- no ioctl_wr at all
+        for (size_t a = 0; a < s0.size(); a += 8) {
+            uint64_t v = 0;
+            for (int b = 0; b < 8 && a + b < s0.size(); b++) v |= uint64_t(s0[a + b]) << (8 * b);
+            ddr.mem[a / 8] = v;
+        }
+        t->ioctl_index = 0;
+        t->ioctl_addr = uint32_t(s0.size());
+        t->ioctl_download = 1;
+        for (int i = 0; i < 200; i++) tick();
+        t->ioctl_download = 0;
+        tick();
+        printf("fast load: %zu bytes placed in DDR3\n", s0.size());
+    } else
+        download(0, s0);
     if (dsw >= 0) {
         std::vector<uint8_t> d(8, 0);
         d[0] = uint8_t(dsw);

@@ -37,6 +37,18 @@ last populated bank) and declare the bank count in the board record:
 | topbladv | `flash.u1` (1) | `mx27l1000.u14` (crysbios) | 0x1020000 |
 | officeye | `flash.u1`, `flash.u2` (2) | `bios.u14` (its own, from officeye.zip) | 0x2020000 |
 
+### Fast ROM loading (DDR3)
+
+The index-0 `<rom>` carries `address="0x32000000"`. Main_MiSTer then does not stream the bytes through `hps_io`:
+it copies the assembled stream straight into DDR3 at that physical address (`rom_finish()` -> `shmem_put()` in
+`support/arcade/mra_loader.cpp`) and frames it with `ioctl_download` high and low, without any `ioctl_wr`
+(`ioctl_addr` holds the length). 0x32000000 is the base of the core's flash store (`crystal_flash_ddr`), so the
+flash banks are already where the core reads them, and the BIOS lies right after the last bank. `crystal_loader`
+recognises a download without data and then writes the 8 protection overlay words into the flash store, copies
+the 128 KiB BIOS from DDR3 to SDRAM 0x1800000 and clears the RAM banks as for a streamed load. An MRA without the
+attribute still streams and loads the old way. Simulation: `tb_core --fast` (stream placed in the DDR3 model,
+download framed without data).
+
 ## MRA index 3: protection PIC firmware
 
 The MAME `pic` region, byte for byte (16-bit little-endian words): program memory at word 0, configuration word at
