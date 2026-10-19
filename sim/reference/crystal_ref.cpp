@@ -42,6 +42,26 @@ void Board::load_flash(const std::vector<uint8_t> &f)
         w16(b + 0x974ed0, 0x90fc);  // PUSH R7-R6-R5-R4-R3-R2
         w16(b + 0x974ed2, 0x9001);  // PUSH R0
     }
+    if (cfg.game == "donghaer") {
+        // init_donghaer(): u16 words in flash bank 0
+        w16(0x037a2, 0x9004);  // PUSH %R2
+        w16(0x037a4, 0x8202);  // LD (%SP,0x8),%R2
+        w16(0x03834, 0x9001);  // PUSH %R0
+        w16(0x03836, 0x9200);  // PUSH %SR
+        w16(0x0ac9e, 0x9004);  // PUSH %R2
+        w16(0x0aca0, 0x4081);  // LERI 0x81
+        w16(0x19c70, 0x900c);  // PUSH %R2-%R3
+        w16(0x19c72, 0x9001);  // PUSH %R0
+        if (cfg.donghaer_pass) {
+            // The PIC challenge calls in the XOR-encrypted protection module (key 0x2a401ae9, RAM = flash + 0x200f4a0)
+            // become LDI 0x1,%R0: every challenge passes, so the timer-2 handler's flag sum is 10 (no random RAM
+            // corruption) and the failure hang never runs. MAME (no PIC dump) fails them.
+            w16(0x2c76, 0xc241);   // 02012116 CALL 0x20118f4 -> LDI (^0x2a40)
+            w16(0x2cae, 0xc241);   // 0201214e CALL 0x20117b8
+            w16(0x2cbc, 0xf2e8);   // 0201215c CALL 0x2011c42 (^0x1ae9)
+            w16(0x2cf6, 0xc241);   // 02012196 CALL 0x2011f80
+        }
+    }
     if (cfg.game == "crysking" && cfg.crysking_patch && flash.size() >= 0x10000) {
         // init_crysking(): u16 little-endian words written into the flash region (docs/PROTECTION.md)
         w16(0x7bb6, 0xdf01);

@@ -81,10 +81,11 @@ int main(int argc, char **argv)
     std::vector<std::string> flash_paths;
     int frames = 600, snap_every = 0;
     std::set<int> snap_at;
-    bool pc_hist = false, pic289 = false, stats = false;
+    bool pc_hist = false, pic289 = false, stats = false, mame_prot = false;
     std::multimap<int, std::string> input_events;
     std::map<int, std::string> dump_ram, dump_tex;
     long long stop_pc = -1;
+    uint32_t watch_lo = 0, watch_hi = 0;   // --watch addr:len: log RAM writes overlapping [addr, addr+len) (work RAM mirror folded)
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto next = [&]() { if (i + 1 >= argc) { fprintf(stderr, "missing value for %s\n", a.c_str()); exit(2); } return std::string(argv[++i]); };
@@ -104,15 +105,22 @@ int main(int argc, char **argv)
         else if (a == "--game") game = next();
         else if (a == "--pic") pic_path = next();
         else if (a == "--stats") stats = true;
+        else if (a == "--mame-prot") mame_prot = true;
         else if (a == "--input") { std::string v = next(); input_events.emplace(atoi(v.c_str()), v.substr(v.find(':') + 1)); }
+        else if (a == "--input-file") {   // one "frame:name:on|off" event per whitespace-separated token
+            std::ifstream in(next()); std::string v;
+            while (in >> v) input_events.emplace(atoi(v.c_str()), v.substr(v.find(':') + 1));
+        }
         else if (a == "--dump-ram") { std::string v = next(); dump_ram[atoi(v.c_str())] = v.substr(v.find(':') + 1); }
         else if (a == "--dump-tex") { std::string v = next(); dump_tex[atoi(v.c_str())] = v.substr(v.find(':') + 1); }
+        else if (a == "--watch") { std::string v = next(); watch_lo = strtoul(v.c_str(), nullptr, 0); watch_hi = watch_lo + strtoul(v.substr(v.find(':') + 1).c_str(), nullptr, 0); }
         else if (a == "--stop-pc") stop_pc = strtoll(next().c_str(), nullptr, 0);
         else { fprintf(stderr, "unknown option %s\n", a.c_str()); return 2; }
     }
     Board b;
     b.cfg.pic_master = !pic289;
     b.cfg.game = game;
+    b.cfg.donghaer_pass = !mame_prot;
     if (game == "topbladv") { b.cfg.soc_num = 95; b.cfg.soc_den = 102; }   // VR0 at 14318180*95/17 (PLL 0x573c)
     if (!pic_path.empty()) {
         pic16::Model m = game == "topbladv" ? pic16::F628A : pic16::F84A;
@@ -124,6 +132,12 @@ int main(int argc, char **argv)
     b.load_flash(flash);
     b.reset();
 
+    if (watch_hi > watch_lo) b.hooks.ram_write = [&](uint32_t addr, int size, uint32_t data) {
+        uint32_t a = (addr >= 0x02000000 && addr < 0x03000000) ? (0x02000000 | (addr & 0x7fffff)) : addr;
+        if (a + size > watch_lo && a < watch_hi)
+            fprintf(stderr, "WATCH W %08x (%08x) size %d data %08x pc=%08x i=%llu f=%d\n", a, addr, size, data, b.cpu.s.PPC,
+                    (unsigned long long)b.cpu.insn_count, b.frame);
+    };
     FILE *fio = io_log.empty() ? nullptr : fopen(io_log.c_str(), "w");
     FILE *fpk = pkt_log.empty() ? nullptr : fopen(pkt_log.c_str(), "w");
     FILE *fdm = dma_log.empty() ? nullptr : fopen(dma_log.c_str(), "w");
@@ -155,6 +169,8 @@ int main(int argc, char **argv)
     auto apply_input = [&](const std::string &e) {
         std::string what = e.substr(0, e.find(':'));
         bool on = e.find(":on") != std::string::npos;
+        int pl = 0;                                   // "p2b1", "p2right": player 2 (odd bits of P1_P2)
+        if (what.size() > 2 && what.compare(0, 2, "p2") == 0) { pl = 1; what = what.substr(2); }
         auto setbit = [&](uint8_t &r, int bit) { if (on) r &= ~(1 << bit); else r |= (1 << bit); };
         auto setbit32 = [&](uint32_t &r, int bit) { if (on) r &= ~(1u << bit); else r |= (1u << bit); };
         if (what == "coin1") { if (on && (b.in.system & 0x10)) b.coin_insert(0); setbit(b.in.system, 4); }
@@ -163,14 +179,14 @@ int main(int argc, char **argv)
         else if (what == "start2") setbit(b.in.system, 1);
         else if (what == "service") setbit(b.in.system, 6);
         else if (what == "test") setbit(b.in.system, 7);
-        else if (what == "b1") setbit32(b.in.p1p2, 0);
-        else if (what == "b2") setbit32(b.in.p1p2, 2);
-        else if (what == "b3") setbit32(b.in.p1p2, 4);
-        else if (what == "b4") setbit32(b.in.p1p2, 6);
-        else if (what == "up") setbit32(b.in.p1p2, 16);
-        else if (what == "down") setbit32(b.in.p1p2, 18);
-        else if (what == "left") setbit32(b.in.p1p2, 20);
-        else if (what == "right") setbit32(b.in.p1p2, 22);
+        else if (what == "b1") setbit32(b.in.p1p2, 0 + pl);
+        else if (what == "b2") setbit32(b.in.p1p2, 2 + pl);
+        else if (what == "b3") setbit32(b.in.p1p2, 4 + pl);
+        else if (what == "b4") setbit32(b.in.p1p2, 6 + pl);
+        else if (what == "up") setbit32(b.in.p1p2, 16 + pl);
+        else if (what == "down") setbit32(b.in.p1p2, 18 + pl);
+        else if (what == "left") setbit32(b.in.p1p2, 20 + pl);
+        else if (what == "right") setbit32(b.in.p1p2, 22 + pl);
         else fprintf(stderr, "unknown input %s\n", what.c_str());
     };
     while (b.frame < frames) {

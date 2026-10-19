@@ -108,7 +108,9 @@ int main(int argc, char **argv)
     // flash words the protection overlay replaces (crysking: game id 1, evosocc: game id 2), 16-byte granules
     auto is_prot = [](uint32_t off) {
         static const uint32_t w[] = {0x7bb0, 0x9760, 0x8090, 0x8a50,                                   // crysking
-                                     0x2973880, 0x2973890, 0x2971050, 0x2971060, 0x2978030, 0x2974ed0}; // evosocc
+                                     0x2973880, 0x2973890, 0x2971050, 0x2971060, 0x2978030, 0x2974ed0,   // evosocc
+                                     0x37a0, 0x3830, 0xac90, 0xaca0, 0x19c70,                        // donghaer
+                                     0x2c70, 0x2ca0, 0x2cb0, 0x2cf0};
         for (uint32_t x : w) if ((off >> 4) == (x >> 4)) return true;
         return false;
     };

@@ -53,6 +53,7 @@ int main(int argc, char **argv)
     std::string bios = rom + "/mx27l1000.u14", pic;
     if (game == "evosocc") files = {"evosocc/bcsv0001u01", "evosocc/bcsv0001u02", "evosocc/bcsv0001u03"};
     if (game == "topbladv") { files = {"topbladv/flash.u1"}; pic = rom + "/topbladv/top_blade_v_pic16c727.bin"; b.cfg.soc_num = 95; b.cfg.soc_den = 102; }
+    if (game == "donghaer") files = {"donghaer/u1", "donghaer/u2"};
     if (game == "officeye") { files = {"officeye/flash.u1", "officeye/flash.u2"}; bios = rom + "/officeye/bios.u14"; pic = rom + "/officeye/office_yeo_in_cheon_ha_pic16f84a.bin"; }
     b.load_bios(read_file(bios));
     if (!pic.empty()) b.load_pic(game == "topbladv" ? pic16::F628A : pic16::F84A, read_file(pic));

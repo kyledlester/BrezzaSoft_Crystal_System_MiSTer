@@ -13,7 +13,7 @@
 // stream straight into DDR3 at that address (shmem_put) and only frame it with ioctl_download, with no ioctl_wr.
 // 0x32000000 is the flash store's base (crystal_flash_ddr), so the flash banks land in place and the BIOS right
 // after them. A download without data is therefore a fast load: the loader writes the protection overlay words
-// into the flash store, copies the BIOS from DDR3 to SDRAM (port r) and clears RAM as above. Streamed MRAs (no
+// (up to 16) into the flash store, copies the BIOS from DDR3 to SDRAM (port r) and clears RAM as above. Streamed MRAs (no
 // address attribute) still load the old way.
 module crystal_loader (
     input  wire        clk,
@@ -62,7 +62,7 @@ module crystal_loader (
     reg  [2:0] st;                 // 0 idle/receive, 1 wait flash, 2 wait sdram word, 3 clear,
                                    // fast load: 4 overlay words -> DDR3, 5 BIOS dword from DDR3, 6/7 its two words -> SDRAM
     reg        dl_data;            // the index-0 download carried data (streamed MRA)
-    reg  [2:0] p_idx;
+    reg  [3:0] p_idx;
     reg [16:0] b_off;              // BIOS byte offset
     reg [15:0] b_hi;
     reg [23:0] clr_addr;
@@ -139,7 +139,7 @@ module crystal_loader (
                 if (!ioctl_download && dl_q && ioctl_index == 16'd0) begin
                     // download finished: streamed -> clear RAM banks 0-2 and the NVRAM area; fast -> overlay
                     // words and BIOS copy first
-                    p_idx <= 3'd0;
+                    p_idx <= 4'd0;
                     b_off <= 17'd0;
                     if (dl_data) start_clear();
                     else st <= 3'd4;
@@ -156,8 +156,8 @@ module crystal_loader (
                     f_be   <= 8'b11 << {p_off[2:1], 1'b0};
                 end else if (f_ack) begin
                     f_req <= 1'b0;
-                    p_idx <= p_idx + 3'd1;
-                    if (p_idx == 3'd7) st <= 3'd5;
+                    p_idx <= p_idx + 4'd1;
+                    if (p_idx == 4'd15) st <= 3'd5;
                 end
             end
             3'd5: begin

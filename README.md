@@ -4,12 +4,13 @@
 
 A MiSTer FPGA core for the **BrezzaSoft Crystal System** (2001), a cartridge arcade
 platform built around the MagicEyes **VRender0** system-on-chip. Supported games:
-**The Crystal of Kings**, **Evolution Soccer**, **Top Blade V** and **Office Yeoin Cheonha**.
+**The Crystal of Kings**, **Evolution Soccer**, **Top Blade V**, **Office Yeoin Cheonha** and
+**Donggul Donggul Haerong**.
 One core (`Crystal`) is written for the whole board; each game has its own MRA.
 
 I created this core because I wanted to play these games on my MiSTer FPGA. I am posting it here and open sourcing it for everyone to enjoy and give feedback/make improvements. This core was created with the assistance of AI tooling.
 
-**Status: beta.** All four games boot, run their attract modes and are playable
+**Status: beta.** All five games boot, run their attract modes and are playable
 on real MiSTer hardware, with sound, controls, DIP switches, NVRAM saves, HDMI and
 15 kHz CRT output, OSD orientation, and CRT adjustment tools.
 
@@ -27,7 +28,7 @@ on real MiSTer hardware, with sound, controls, DIP switches, NVRAM saves, HDMI a
    [`MRA/_alternatives/`](MRA/_alternatives/) to **`/media/fat/_Arcade/_alternatives/`**.
 3. Put the MAME 0.289 ROM zips in **`/media/fat/games/mame/`**: **`crysbios.zip`** (the
    Crystal System BIOS, needed by every game except Office Yeoin Cheonha) and the game zips
-   **`crysking.zip`**, **`evosocc.zip`**, **`topbladv.zip`**, **`officeye.zip`**.
+   **`crysking.zip`**, **`evosocc.zip`**, **`topbladv.zip`**, **`officeye.zip`**, **`donghaer.zip`**.
 4. Load the game from the **Arcade** menu. Loading the 48 MB set takes a few seconds.
 
 ROMs are not included. You must supply your own.
@@ -40,10 +41,14 @@ ROMs are not included. You must supply your own.
 | Evolution Soccer | `evosocc` | 2001 | Soccer | Crystal System (AMG0110B BIOS) | Playable on hardware |
 | Top Blade V | `topbladv` | 2003 | Spinning-top battle | Crystal System, PIC16F628A protection, 80 MHz VRender0 | Playable on hardware |
 | Office Yeoin Cheonha (version 1.2) | `officeye` | 2001 | Party / reaction (3 players) | Crystal System hardware, own BIOS, PIC16F84A protection | Playable on hardware |
+| Donggul Donggul Haerong | `donghaer` | 2001 | Platform | Crystal System (AMG0110B BIOS) | Playable on hardware |
 
 The protection microcontrollers of Top Blade V and Office Yeoin Cheonha are dumped (MAME), so the core runs
 their firmware on a PIC16 core of its own; The Crystal of Kings and Evolution Soccer use MAME's protection
-patches, applied while loading (the ROM files are never modified).
+patches, applied while loading (the ROM files are never modified). Donggul Donggul Haerong is marked not working
+in MAME: without its (undumped) protection chip the game punishes itself by corrupting memory and hanging. The
+core adds four patch words that let the game's own protection checks pass, so it plays normally; details in
+[docs/PROTECTION.md](docs/PROTECTION.md).
 
 ### Alternatives
 
@@ -58,7 +63,7 @@ These use the same core and the same game, with a different ROM set.
 Each game uses MAME's input layout. Joystick 1 is player 1, joystick 2 is player 2 (joystick 3 is player 3 in
 Office Yeoin Cheonha). Map the buttons in MiSTer's controller setup; buttons a game does not use are not offered.
 
-| MiSTer | The Crystal of Kings, Evolution Soccer | Top Blade V | Office Yeoin Cheonha |
+| MiSTer | The Crystal of Kings, Evolution Soccer, Donggul Donggul Haerong | Top Blade V | Office Yeoin Cheonha |
 | --- | --- | --- | --- |
 | Players | 2 | 2 | 3 |
 | D-pad / stick | 8-way joystick | 8-way joystick | (not used) |

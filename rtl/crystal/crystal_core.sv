@@ -121,6 +121,7 @@ module crystal_core (
     //   2 Evolution Soccer       (crysbios, 3 flash banks, protection overlay)
     //   3 Top Blade V            (crysbios, 1 flash bank, PIC16F628A, VRender0/CPU at 14.318 MHz * 95/17 / 34)
     //   4 Office Yeoin Cheonha   (own BIOS, 2 flash banks, PIC16F84A, 3 players x 3 buttons)
+    //   5 Donggul Donggul Haerong (crysbios, 2 flash banks, protection overlay)
     wire g_topbladv = (game_id == 8'd3);
     wire g_officeye = (game_id == 8'd4);
     // VRender0/CPU clock enable: Top Blade V programs its PLL for 80.013 MHz = 85.909 MHz * 95/102 (MAME

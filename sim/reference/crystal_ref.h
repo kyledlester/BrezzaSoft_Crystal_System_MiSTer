@@ -32,6 +32,7 @@ struct Config {
     bool pic_master = true;          // MAME master: PIO bit 29 reads !(written bit 29); 0.289: reads 0
     bool reset_patch = false;        // MAME-only test-menu reset workaround (category: MAME convenience)
     bool crysking_patch = true;      // init_crysking() protection substitution (game "crysking")
+    bool donghaer_pass = true;       // donghaer: protection challenges report "pass" (beyond MAME; docs/PROTECTION.md)
     int  bios = 0;                   // 0 = mx27l1000.u14, 1 = mx27l1000-alt.u14
     // game: "crysking", "evosocc" (init_evosocc patches), "topbladv" (PIC16F628A, 80 MHz VR0), "officeye"
     // (own BIOS, PIC16F84A). soc_num/soc_den = VR0 clock / 85.909080 MHz (topbladv: 95/102); the screen (pixel

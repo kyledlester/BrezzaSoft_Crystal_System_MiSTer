@@ -9,10 +9,37 @@ Each cartridge carries a PIC microcontroller ("dgSMART-PR" family) that talks to
 | Evolution Soccer | PIC16F84A, undumped | `init_evosocc()` patches 8 words in flash bank 2 | the same, game id 2 |
 | Top Blade V | PIC16F628A, dumped | emulated (pic16x8x), VR0 at 80 MHz | `crystal_pic16` runs the firmware (MRA index 3), clock as MAME |
 | Office Yeoin Cheonha | PIC16F84A, dumped | emulated (pic16x8x) | `crystal_pic16` runs the firmware |
+| Donggul Donggul Haerong | PIC16F84A, undumped | `init_donghaer()` patches 8 words; the game's own PIC challenges still fail (MAME: not working) | MAME's 8 words plus 4 that make the challenges pass, game id 5 (below) |
 
 The PIC core is verified instruction by instruction against `sim/reference/pic16_ref.h` (a port of MAME's
 pic16x8x) by `scripts/sim/pic_difftest.sh`: both firmwares (2 M instructions each) and 40 random programs.
 Without the PIC, Top Blade V stops at its version screen and Office Yeoin Cheonha at the BIOS boot.
+
+## Donggul Donggul Haerong: why MAME marks it not working, and the fix
+
+MAME's `init_donghaer()` restores four function prologues, which is enough to boot. The game also checks the PIC
+continuously, and with no PIC every check fails. Found with the reference model (`crystal_sim --game donghaer`, RAM
+watchpoints `--watch`, and the SE3208 disassembler from MAME) on the program the game decrypts into RAM:
+
+* The protection module (RAM 0x020100a4-0x02012cd7, flash = RAM - 0x200f4a0) is stored XOR-encrypted with the
+  32-bit key 0x2a401ae9 (the value the BIOS writes into its flag table at boot) and decrypted into RAM at start-up.
+* A check routine (RAM 0x020120d8) runs up to four bit-banged PIC challenges (0x020118f4: the PIC must return 19
+  bytes equal to a table at 0x02012a38; 0x020117b8, 0x02011c42, 0x02011f80). Each pass sets a flag (0x02012a0c,
+  0x02012a10, 0x02012a14) and ORs a bit into 0x02012a18; each failure sets 0x02012a1c/20/24 and ORs into 0x02012a28.
+  All passing gives a flag sum of 10.
+* The timer-2 interrupt (IRQ 9, handler 0x0201142e) sums the eight flags every 21 ticks. If the sum is not 10 it
+  corrupts 8 random work-RAM words (base 0x02010000 + random % 1 MiB): MAME's "very randomly corrupts itself". In
+  the reference model the first visible damage is a heap pointer losing its top byte (frame 4166), which garbles the
+  next level's background at frame 5004.
+* Another routine (0x020115f8, called when 0x02012a28 is non-zero) spins forever: MAME's hangs.
+
+Core (overlay entries 8-11, game id 5): the four challenge `CALL`s become `LDI 0x1,%R0` (the `LERI` before each
+leaves R0 non-zero), so every challenge passes. Encrypted flash words: 0x2C76 = 0xC241, 0x2CAE = 0xC241,
+0x2CBC = 0xF2E8, 0x2CF6 = 0xC241 (`word ^ 0x1AE9` at RAM addresses = 0 mod 4, `^ 0x2A40` otherwise; each checked to
+decrypt to the original `CALL` before replacing it). Results in the reference model, same 2-player input script,
+30,000 frames (8 min): MAME behaviour (`crystal_sim --mame-prot`) goes black at about frame 3,600 and crashes at
+frame 23,501; with the fix the whole session plays (2-player split screen, continue, name entry, ranking, attract)
+with no invalid instruction. The 20,000-frame attract loop is clean too.
 
 ## The Crystal of Kings
 
